@@ -95,8 +95,18 @@ else
   echo "### Installing Xcode Command Line Tools ###"
   echo "    A dialog will appear -- click Install."
   xcode-select --install >/dev/null 2>&1 || true
+  # If the dialog is dismissed, `xcode-select -p` never resolves
+  # and the loop would spin forever -- bail after 30 minutes with
+  # a clear message instead.
+  SECS=0
   until xcode-select -p >/dev/null 2>&1 && [ -d "$(xcode-select -p)" ]; do
     sleep 5
+    SECS=$((SECS + 5))
+    if [ "$SECS" -ge 1800 ]; then
+      echo "    Timed out waiting for Xcode CLT after 30 minutes." >&2
+      echo "    Run 'xcode-select --install' manually, then re-run this script." >&2
+      exit 1
+    fi
   done
   echo "    Xcode CLT installed."
 fi
@@ -203,6 +213,7 @@ FORMULAS=(
   mkcert
   oha
   pipx
+  pnpm
   fnm
 )
 echo "### Installing brew formulas: ${FORMULAS[*]} ###"
@@ -213,7 +224,7 @@ brew install "${FORMULAS[@]}"
 # the `delta` binary.
 echo "### Verifying installed commands ###"
 MISSING=""
-for command in nvim bat rg fd lf yadm gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx fnm; do
+for command in nvim bat rg fd lf yadm gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx pnpm fnm; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "    Missing command: $command" >&2
     MISSING="$MISSING $command"
@@ -239,22 +250,42 @@ mkdir -p "$HOME/.local/share/nvim/undodir"
 # ------------------------------------------------------------
 # 6. Node via fnm (node version manager, via Homebrew)
 # ------------------------------------------------------------
-# ~/.zshrc lists the `fnm` plugin and the `corepackup`/pnpm
-# helpers, so node is needed. fnm comes from brew here (no curl
-# installer + symlink dance like the VPS, where apt has no fnm).
+# ~/.zshrc lists the `fnm` plugin and pnpm, so node is needed.
+# fnm comes from brew here (no curl installer + symlink dance
+# like the VPS, where apt has no fnm). pnpm is installed via
+# brew too -- not corepack, which newer Node LTS no longer ships.
 echo "### Installing latest LTS Node via fnm ###"
 eval "$(fnm env)"
 fnm install --lts
 fnm default lts-latest
 
 # Put fnm's node on PATH for this shell and confirm node and
-# corepack actually work.
+# pnpm actually work.
 eval "$(fnm env)"
 node --version
-corepack --version
+pnpm --version
 
 # ------------------------------------------------------------
-# 7. Ensure zsh is the default shell
+# 7. pipx apps (Python CLIs, each in its own venv)
+# ------------------------------------------------------------
+# pipx (from brew above) installs Python CLIs into ~/.local/pipx
+# and exposes them on PATH via ~/.local/bin. rich-cli is
+# deliberately not installed.
+echo "### Installing pipx apps ###"
+pipx install virtualenv
+pipx install yt-dlp
+# pipx exposes apps in ~/.local/bin, which the script's own
+# non-interactive PATH won't include (that export lives in the
+# dotfiles' .zshrc), so verify by file, not `command -v`.
+for app in virtualenv yt-dlp; do
+  if [ ! -x "$HOME/.local/bin/$app" ]; then
+    echo "    Missing pipx app: $app" >&2
+    exit 1
+  fi
+done
+
+# ------------------------------------------------------------
+# 8. Ensure zsh is the default shell
 # ------------------------------------------------------------
 # zsh is the default login shell on macOS since Catalina, so this
 # is normally a no-op -- the guard exists for older/odd setups.
@@ -267,7 +298,7 @@ else
 fi
 
 # ------------------------------------------------------------
-# 8. Host key (generated on this Mac, added to GitHub)
+# 9. Host key (generated on this Mac, added to GitHub)
 # ------------------------------------------------------------
 # Unlike the VPS there is no deploy key: the operator's own key
 # lives on the Mac and its public half is added to GitHub so the
@@ -300,31 +331,63 @@ if [ ! -f "$HOME/.ssh/id_ed25519" ]; then
   read "_IGNORED?    Press Enter once it's added to GitHub: " || true
 else
   echo "    SSH key already exists; reusing it."
-  read -rs "SSH_KEY_PASS?    Passphrase for ~/.ssh/id_ed25519 (required): " || true
-  echo
-  if [ -z "$SSH_KEY_PASS" ]; then
-    echo "    Passphrase cannot be empty." >&2
-    exit 1
-  fi
+  echo "    Fingerprint: $(ssh-keygen -lf "$HOME/.ssh/id_ed25519")"
+fi
+
+# macOS only auto-loads keys from the Keychain into future
+# sessions when ~/.ssh/config carries UseKeychain/AddKeysToAgent.
+# The dotfiles don't track this file, so pre-seed it here (before
+# the first ssh-add, and before the yadm clone that could collide
+# with it -- there's nothing to collide with since yadm doesn't
+# manage it).
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+if [ ! -f "$HOME/.ssh/config" ]; then
+  echo "### Writing ~/.ssh/config (Keychain integration) ###"
+  cat > "$HOME/.ssh/config" <<'EOF'
+Host *
+  AddKeysToAgent yes
+  UseKeychain yes
+  IdentityFile ~/.ssh/id_ed25519
+EOF
+  chmod 600 "$HOME/.ssh/config"
+else
+  echo "    ~/.ssh/config already exists; leaving it alone."
 fi
 
 # The key has a passphrase, so load it into an ssh-agent
 # (spawned just for this script, killed on exit by the trap
 # above) and store the passphrase in the Keychain, before the
 # yadm clone below -- otherwise the first SSH connection to
-# github.com would prompt for the passphrase and hang.
+# github.com would prompt for the passphrase and hang. On a
+# re-run the key is already in the Keychain, so load it from
+# there first and skip the passphrase prompt entirely.
 echo "### Loading SSH key into ssh-agent + Keychain ###"
 eval "$(ssh-agent -s)"
-setup_askpass "$SSH_KEY_PASS"
-if ssh-add -l >/dev/null 2>&1 && ssh-add -l 2>/dev/null | grep -q id_ed25519; then
-  echo "    Key already loaded."
+# macOS's --apple-load-keychain ignores its path argument and
+# loads whatever is in the Keychain, so judge success by whether
+# our key's fingerprint actually landed in the agent.
+SSH_KEY_FP="$(ssh-keygen -lf "$HOME/.ssh/id_ed25519" | awk '{print $2}')"
+if ssh-add --apple-load-keychain >/dev/null 2>&1 \
+  && ssh-add -l 2>/dev/null | grep -q "$SSH_KEY_FP"; then
+  echo "    Loaded from Keychain."
 else
+  if [ -z "${SSH_KEY_PASS:-}" ]; then
+    read -rs "SSH_KEY_PASS?    Passphrase for $HOME/.ssh/id_ed25519 (required): " || true
+    echo
+    if [ -z "$SSH_KEY_PASS" ]; then
+      echo "    Passphrase cannot be empty." >&2
+      exit 1
+    fi
+  fi
+  setup_askpass "$SSH_KEY_PASS"
   SSH_ASKPASS="$ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force \
     ssh-add --apple-use-keychain "$HOME/.ssh/id_ed25519"
 fi
+unset SSH_KEY_PASS SSH_KEY_PASS_CONFIRM
 
 # ------------------------------------------------------------
-# 9. Dotfiles
+# 10. Dotfiles
 # ------------------------------------------------------------
 # yadm clones over SSH; pre-seed known_hosts so the first
 # connection to github.com doesn't prompt for host confirmation
@@ -334,10 +397,26 @@ fi
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 GITHUB_HOST_KEY="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
-if ! ssh-keygen -F github.com >/dev/null 2>&1; then
+# Add the pinned key only if that exact line is absent -- checking
+# `ssh-keygen -F github.com` would skip even when the only entry
+# is a stale or wrong key (e.g. an old RSA one).
+if ! grep -qxF "$GITHUB_HOST_KEY" "$HOME/.ssh/known_hosts" 2>/dev/null; then
   echo "$GITHUB_HOST_KEY" >> "$HOME/.ssh/known_hosts"
 fi
 chmod 600 "$HOME/.ssh/known_hosts" 2>/dev/null || true
+
+# Verify the key actually authenticates to GitHub before we rely
+# on it for the yadm clone; a typo'd or not-yet-added key would
+# otherwise surface as a confusing clone failure. GitHub always
+# exits non-zero for `ssh -T` even on success, so check the
+# banner text rather than the exit code.
+echo "### Verifying GitHub SSH auth ###"
+GITHUB_AUTH_OUTPUT="$(ssh -o BatchMode=yes -T git@github.com 2>&1 || true)"
+if ! echo "$GITHUB_AUTH_OUTPUT" | grep -q "successfully authenticated"; then
+  echo "    GitHub SSH auth failed. Is the public key added to GitHub?" >&2
+  exit 1
+fi
+echo "    GitHub SSH auth OK."
 
 echo "### Cloning dotfiles with yadm ###"
 # yadm 3.x keeps its bare repo under XDG data (~/.local/share/yadm),
@@ -393,14 +472,6 @@ else
   fi
 fi
 
-# Homebrew's installer writes `eval "$(brew shellenv)"` to
-# ~/.zprofile; the move-aside above may have hidden it. If the
-# dotfiles don't track a .zprofile that sets brew up, re-add it
-# so a fresh login shell still finds brew.
-if ! grep -q 'brew shellenv' "$HOME/.zprofile" 2>/dev/null; then
-  echo 'eval "$('"$HOMEBREW_PREFIX"'/bin/brew shellenv)"' >> "$HOME/.zprofile"
-  echo "    Added brew shellenv to ~/.zprofile."
-fi
 
 # Install the plugins listed in ~/.config/nvim/init.vim. This
 # needs init.vim to exist (from the yadm clone just above).
@@ -424,11 +495,20 @@ fi
 
 echo ""
 echo "### Final environment check ###"
-for command in zsh nvim fd bat rg lf yadm gh fnm node npm corepack; do
+for command in zsh nvim fd bat rg lf yadm gh fnm node npm pnpm; do
   if command -v "$command" >/dev/null 2>&1; then
     echo "    OK  $command"
   else
     echo "    MISSING $command" >&2
+  fi
+done
+# pipx apps live in ~/.local/bin, which is added to PATH only by
+# the dotfiles' .zshrc in an interactive shell.
+for app in virtualenv yt-dlp; do
+  if [ -x "$HOME/.local/bin/$app" ]; then
+    echo "    OK  $app (pipx)"
+  else
+    echo "    MISSING $app" >&2
   fi
 done
 

@@ -26,7 +26,7 @@ Each step fetches the script with `bash -c "$(curl -fsSL <url>)"`. That form kee
 - Key-only SSH: **host key** (your laptop's) for logging in, **GitHub deploy key** (generated on the server) for the dotfiles clone
 - **zsh + oh-my-zsh** with autosuggestions, syntax highlighting, and the spaceship prompt
 - **neovim** with vim-plug (plugins come from your dotfiles), **fd**, **bat**, **ripgrep**, **lf**, **yadm**
-- **Node** (latest LTS) via **fnm**, with corepack/pnpm
+- **Node** (latest LTS) via **fnm**, with **pnpm** (brew on Mac, standalone installer on Linux)
 - Optionally: UFW firewall and a Squid proxy
 - Your **dotfiles** cloned from `git@github.com:zzacong/dotfiles.git` — everything user-level lives there, so this repo only *bootstraps* the box
 
