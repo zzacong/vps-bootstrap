@@ -132,9 +132,16 @@ eval "$("$HOMEBREW_PREFIX/bin/brew" shellenv)"
 # ------------------------------------------------------------
 # --unattended skips the interactive prompts and does NOT change
 # the default shell (zsh is already the default on macOS, checked
-# in step 7).
+# in step 7). The installer hard-exits 1 if ~/.oh-my-zsh already
+# exists, so guard it like the plugin clones below to stay
+# re-runnable. ZDOTDIR mirrors how the installer resolves $ZSH.
 echo "### Installing oh-my-zsh ###"
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+ZSH_DIR="${ZDOTDIR:-$HOME}/.oh-my-zsh"
+if [ ! -d "$ZSH_DIR" ]; then
+  sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+else
+  echo "    Already installed, skipping."
+fi
 
 # The plugins are cloned into oh-my-zsh's custom directory.
 # --depth=1 keeps the clone shallow and fast. Each clone is
