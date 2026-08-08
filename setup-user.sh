@@ -359,7 +359,18 @@ fi
 # needs init.vim to exist (from the yadm clone just above).
 echo "### Installing neovim plugins via vim-plug ###"
 if [ -f "$HOME/.config/nvim/init.vim" ]; then
-  nvim --headless +'PlugInstall --sync' +qa
+  # Chicken-and-egg: init.vim is sourced at startup, before
+  # vim-plug has installed anything, so a colorscheme that ships
+  # in a plugin (onehalfdark comes from sonph/onehalf) errors out
+  # with E185 on the very first run. Source init.vim from a
+  # throwaway vimrc with errors silenced so the whole file is
+  # registered and PlugInstall can finish; the next normal nvim
+  # session then finds the theme. Any real config error still
+  # surfaces when nvim is opened normally.
+  PLUG_VIMRC="$(mktemp)"
+  CLEANUP_FILES+=("$PLUG_VIMRC")
+  printf 'silent! source %s\n' "$HOME/.config/nvim/init.vim" > "$PLUG_VIMRC"
+  nvim --headless -u "$PLUG_VIMRC" +'PlugInstall --sync' +qa
 else
   echo "    No ~/.config/nvim/init.vim found; skipping PlugInstall."
 fi
@@ -419,12 +430,19 @@ EOF
     echo "    Effective settings:"
     sudo sshd -T | grep -Ei '^(permitrootlogin|passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication) ' | sed 's/^/      /'
 
-    # Reload instead of restart where possible. Ubuntu 22.10+ uses
-    # socket activation (ssh.socket); detect it rather than assume.
+    # Ubuntu 22.10+ runs sshd under socket activation (ssh.socket):
+    # socket units don't support `reload`, so restart the socket to
+    # regenerate the listener (systemd re-reads sshd_config for it),
+    # and restart the daemon too so a running sshd picks up the new
+    # auth settings -- existing sessions are reparented, not killed.
+    # Detect the layout rather than assume. On classic (non-socket)
+    # installs a plain reload is enough and avoids dropping the
+    # listener.
     if systemctl list-unit-files ssh.socket >/dev/null 2>&1 &&
       systemctl is-enabled --quiet ssh.socket 2>/dev/null; then
       sudo systemctl daemon-reload
-      sudo systemctl reload ssh.socket
+      sudo systemctl restart ssh.socket
+      sudo systemctl restart ssh.service 2>/dev/null || true
     else
       sudo systemctl reload ssh
     fi
