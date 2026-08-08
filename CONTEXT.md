@@ -1,6 +1,6 @@
 # VPS Bootstrap Context
 
-Provisioning a fresh Ubuntu VPS into a usable dev box via three root-shell scripts (`setup-root.sh`, `setup-ssh.sh`, `setup-user.sh`) and a reference `zshrc.ubuntu`.
+Provisioning a fresh Ubuntu VPS into a usable dev box via three step scripts (`setup-root.sh`, `setup-ssh.sh`, `setup-user.sh`), plus `setup-squid.sh`, a standalone extract of setup-user.sh's optional Squid section used to re-run or fix just the proxy config.
 
 ## Language
 

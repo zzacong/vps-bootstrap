@@ -584,14 +584,25 @@ http_access allow auth_users
 EOF
 )
 
-  if ! grep -q "auth_param basic program" /etc/squid/squid.conf; then
+  # The stock squid.conf is the full documented file and contains
+  # commented `##auth_param basic program ...` and possibly
+  # `##acl auth_users ...` example lines, so grep'ing for either
+  # would falsely report "already done" and skip writing. Anchor
+  # the marker at column 0 so only the active generated line
+  # matches.
+  if ! grep -q "^acl auth_users proxy_auth REQUIRED" /etc/squid/squid.conf; then
     # The allow rules must be inserted before the default
     # `http_access deny all` line, otherwise they never fire. If
     # that anchor is missing, refuse to edit rather than guess -- a
     # silently nonfunctional proxy config is worse than none.
-    DENY_LINE=$(grep -n '^http_access deny all$' /etc/squid/squid.conf | head -n1 | cut -d: -f1)
+    # `|| true` keeps `set -e` from killing the script when grep
+    # finds nothing, so the missing-anchor guard below runs and
+    # actually prints why it refused to edit.
+    DENY_LINE=$(grep -n '^http_access deny all$' /etc/squid/squid.conf | head -n1 | cut -d: -f1 || true)
     if [ -z "$DENY_LINE" ]; then
       echo "    Could not locate Squid's 'http_access deny all' anchor; refusing to edit." >&2
+      echo "    Existing http_access lines:" >&2
+      grep -n '^http_access' /etc/squid/squid.conf >&2 || echo "    (none)" >&2
       exit 1
     fi
 
