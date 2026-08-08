@@ -143,7 +143,12 @@ fi
 # --unattended skips the interactive prompts and does NOT
 # change the default shell (we do that explicitly in step 5).
 echo "### Installing oh-my-zsh ###"
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+ZSH_DIR="${ZDOTDIR:-$HOME}/.oh-my-zsh"
+if [ ! -d "$ZSH_DIR" ]; then
+  sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+else
+  echo "    Already installed, skipping."
+fi
 
 # The plugins are cloned into oh-my-zsh's custom directory.
 # --depth=1 keeps the clone shallow and fast. Each clone is
