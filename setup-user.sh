@@ -255,19 +255,28 @@ node --version
 # it detects; we keep our own PATH story instead -- the dotfiles'
 # .zshrc exports PNPM_HOME and puts $PNPM_HOME/bin on PATH -- so
 # just export it into this script's shell for the checks below.
+# Install is opt-in: pnpm's binary is ~30MB and a disk-tight VPS
+# may not have room, so ask first (skipped entirely when already
+# installed, so re-runs stay hands-free).
 echo "### Installing pnpm ###"
 export PNPM_HOME="$HOME/.local/share/pnpm"
 export PATH="$PNPM_HOME/bin:$PATH"
-if [ ! -x "$PNPM_HOME/bin/pnpm" ]; then
-  curl -fsSL https://get.pnpm.io/install.sh | sh -
-  if [ ! -x "$PNPM_HOME/bin/pnpm" ]; then
-    echo "    pnpm install failed; binary missing at $PNPM_HOME/bin/pnpm." >&2
-    exit 1
-  fi
-else
+if [ -x "$PNPM_HOME/bin/pnpm" ]; then
   echo "    pnpm already installed, skipping download."
+  pnpm --version
+else
+  read -rp "    Install pnpm? (y/N): " INSTALL_PNPM || true
+  if [[ "${INSTALL_PNPM,,}" =~ ^y(es)?$ ]]; then
+    curl -fsSL https://get.pnpm.io/install.sh | sh -
+    if [ ! -x "$PNPM_HOME/bin/pnpm" ]; then
+      echo "    pnpm install failed; binary missing at $PNPM_HOME/bin/pnpm." >&2
+      exit 1
+    fi
+    pnpm --version
+  else
+    echo "    Skipping pnpm install."
+  fi
 fi
-pnpm --version
 
 # ------------------------------------------------------------
 # 5. Make zsh the default shell
