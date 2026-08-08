@@ -20,10 +20,6 @@ set -euo pipefail
 # added to GitHub by setup-ssh.sh.
 DOTFILES_REPO="git@github.com:zzacong/dotfiles.git"
 
-# Default passphrase for the GitHub SSH key -- must match what
-# setup-ssh.sh used, or was chosen when the key was generated.
-DEFAULT_SSH_PASS="Ddld1019."
-
 # This whole script must run as the new user, not root,
 # otherwise everything gets installed into /root instead.
 if [ "$(id -u)" -eq 0 ]; then
@@ -34,6 +30,52 @@ fi
 # Keep apt fully non-interactive so conffile and needrestart
 # prompts can't hang an unattended run.
 export DEBIAN_FRONTEND=noninteractive
+
+# ------------------------------------------------------------
+# Cleanup + helper plumbing
+# ------------------------------------------------------------
+# One EXIT trap drives everything: removes the temp files that hold
+# the SSH passphrase and kills the sudo keep-alive loop.
+CLEANUP_FILES=()
+SUDO_KEEPALIVE_PID=""
+cleanup() {
+  local f
+  for f in "${CLEANUP_FILES[@]:-}"; do
+    rm -f "$f"
+  done
+  if [ -n "$SUDO_KEEPALIVE_PID" ]; then
+    kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+# Feed a passphrase to ssh-keygen/ssh-add via SSH_ASKPASS so it never
+# appears on a command line or gets interpolated into script source:
+# the secret lives in a 0600 temp file that a tiny helper cats on
+# demand. OpenSSH >= 8.4 honours SSH_ASKPASS_REQUIRE=force.
+setup_askpass() {
+  local helper passfile
+  helper="$(mktemp)"
+  passfile="$(mktemp)"
+  chmod 600 "$passfile"
+  printf '%s' "$1" > "$passfile"
+  printf '#!/bin/sh\ncat "%s"\n' "$passfile" > "$helper"
+  chmod 700 "$helper"
+  CLEANUP_FILES+=("$helper" "$passfile")
+  ASKPASS_HELPER="$helper"
+}
+
+# The long run below calls sudo many times; keep the credential
+# timestamp fresh so a later sudo can't suddenly prompt (or fail
+# under `set -e`) mid-script. The trap above kills it on exit.
+sudo -v
+(
+  while :; do
+    sudo -n true || exit 0
+    sleep 60
+  done
+) &
+SUDO_KEEPALIVE_PID=$!
 
 # ------------------------------------------------------------
 # 1. System packages (via sudo)
@@ -87,6 +129,11 @@ if [ ! -d "$ZSH_CUSTOM_DIR/themes/spaceship-prompt" ]; then
 else
   echo "    Already cloned, skipping."
 fi
+
+# OMZ resolves `ZSH_THEME="spaceship"` against themes/spaceship.zsh-theme;
+# the spaceship repo ships one, so link it into the themes dir.
+ln -sf "$ZSH_CUSTOM_DIR/themes/spaceship-prompt/spaceship.zsh-theme" \
+  "$ZSH_CUSTOM_DIR/themes/spaceship.zsh-theme"
 
 # ------------------------------------------------------------
 # 3. Neovim: vim-plug + renamed binary symlinks + undodir
@@ -145,10 +192,15 @@ if [ ! -f "$HOME/.ssh/id_ed25519" ]; then
   # Owner-only rwx on the dir so ssh doesn't warn "unprotected
   # private key file" and no other user can list its contents.
   chmod 700 "$HOME/.ssh"
-  read -rsp "    Passphrase for the new SSH key [$DEFAULT_SSH_PASS]: " SSH_KEY_PASS || true
-  SSH_KEY_PASS="${SSH_KEY_PASS:-$DEFAULT_SSH_PASS}"
+  read -rsp "    Passphrase for the new SSH key (empty = generate a random one): " SSH_KEY_PASS || true
   echo
-  ssh-keygen -t ed25519 -N "$SSH_KEY_PASS" -C "$(whoami)@$(hostname)" -f "$HOME/.ssh/id_ed25519"
+  if [ -z "$SSH_KEY_PASS" ]; then
+    SSH_KEY_PASS="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24 || true)"
+    echo "    Generated passphrase (save it): $SSH_KEY_PASS"
+  fi
+  setup_askpass "$SSH_KEY_PASS"
+  SSH_ASKPASS="$ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force \
+    ssh-keygen -t ed25519 -C "$(whoami)@$(hostname)" -f "$HOME/.ssh/id_ed25519"
   echo "    Add this public key to GitHub:"
   cat "$HOME/.ssh/id_ed25519.pub"
   read -rp "    Press Enter once it's added to GitHub: " _IGNORED || true
@@ -162,34 +214,41 @@ fi
 echo "### Loading SSH key into ssh-agent ###"
 eval "$(ssh-agent -s)"
 if [ -z "${SSH_KEY_PASS:-}" ]; then
-  read -rsp "    SSH key passphrase [$DEFAULT_SSH_PASS]: " SSH_KEY_PASS || true
-  SSH_KEY_PASS="${SSH_KEY_PASS:-$DEFAULT_SSH_PASS}"
+  read -rsp "    SSH key passphrase: " SSH_KEY_PASS || true
   echo
 fi
-SSH_ASKPASS_HELPER="$(mktemp)"
-printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$SSH_KEY_PASS" > "$SSH_ASKPASS_HELPER"
-# Make the helper executable so ssh-add can run it as a program
-# (SSH_ASKPASS expects a path to an executable).
-chmod +x "$SSH_ASKPASS_HELPER"
-SSH_ASKPASS="$SSH_ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force ssh-add "$HOME/.ssh/id_ed25519"
-rm -f "$SSH_ASKPASS_HELPER"
+setup_askpass "$SSH_KEY_PASS"
+SSH_ASKPASS="$ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force ssh-add "$HOME/.ssh/id_ed25519"
 
-# oh-my-zsh wrote a default .zshrc; remove it so yadm's version
+# oh-my-zsh wrote a default .zshrc; move it aside so yadm's version
 # from the dotfiles repo takes over without conflict. The other
 # /etc/skel files (.bashrc, .profile, .bash_logout) can also
-# collide with files tracked in the dotfiles repo, so clear them
-# too -- zsh is the default shell, so bash's files go unused.
-echo "### Removing default shell files that could collide with yadm ###"
-rm -f "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.bash_logout"
+# collide with files tracked in the dotfiles repo, so back them up
+# too -- zsh is the default shell, so bash's files go unused. Moving
+# (not deleting) means a failed yadm clone doesn't leave the user
+# without a shell rc; the *.pre-yadm copies can be deleted later.
+echo "### Moving default shell files aside (backed up as *.pre-yadm) ###"
+for f in .zshrc .bashrc .bash_profile .profile .bash_logout; do
+  if [ -f "$HOME/$f" ] && [ ! -e "$HOME/$f.pre-yadm" ]; then
+    mv "$HOME/$f" "$HOME/$f.pre-yadm"
+  fi
+done
 
 # yadm clones over SSH; pre-seed known_hosts so the first
 # connection to github.com doesn't prompt for host confirmation
-# and hang in a non-interactive context.
+# and hang in a non-interactive context. We pin GitHub's published
+# ed25519 host key (fingerprint SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU,
+# per https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints)
+# rather than blindly trusting whatever the network presents.
 mkdir -p "$HOME/.ssh"
 # Same owner-only rwx as above: keep ssh happy and the dir
 # private for the keys it will hold.
 chmod 700 "$HOME/.ssh"
-ssh-keyscan -t ed25519 github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
+if ! grep -q "github.com" "$HOME/.ssh/known_hosts" 2>/dev/null; then
+  printf 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n' \
+    >> "$HOME/.ssh/known_hosts"
+  echo "    Pinned github.com host key in known_hosts."
+fi
 
 echo "### Cloning dotfiles with yadm ###"
 if [ -d "$HOME/.config/yadm/repo.git" ]; then
@@ -206,7 +265,7 @@ fi
 # needs init.vim to exist (from the yadm clone just above).
 echo "### Installing neovim plugins via vim-plug ###"
 if [ -f "$HOME/.config/nvim/init.vim" ]; then
-  nvim +'PlugInstall --sync' +qall
+  nvim --headless +'PlugInstall --sync' +qa
 else
   echo "    No ~/.config/nvim/init.vim found; skipping PlugInstall."
 fi
@@ -220,28 +279,42 @@ fi
 # and the yadm clone just proved the GitHub key works, so
 # disabling password auth can't lock you out.
 echo "### Hardening sshd (no root login, key-only auth) ###"
+# Gate on a verified key: if no key is installed, disabling password
+# auth would lock you out of a cloud VPS that has no other way in.
+if [ ! -s "$HOME/.ssh/authorized_keys" ]; then
+  echo "    No keys in ~/.ssh/authorized_keys -- refusing to disable password auth." >&2
+  echo "    Run setup-ssh.sh (as root) to install your host machine's key, then re-run this script." >&2
+  exit 1
+fi
 sudo tee /etc/ssh/sshd_config.d/50-hardening.conf >/dev/null <<'EOF'
 PermitRootLogin no
 PasswordAuthentication no
 PubkeyAuthentication yes
+KbdInteractiveAuthentication no
 MaxAuthTries 3
 LoginGraceTime 20
 EOF
 
-# sshd is socket-activated on Ubuntu 22.10+: ssh.socket owns
-# port 22 and ssh.service is only spawned on demand. Reload the
-# daemon first so the new drop-in config is picked up, then
-# restart the socket (and the service if it happens to be up).
+# Validate the drop-in before touching the running daemon, and make
+# sure sshd actually comes back up (socket-activated on 22.10+).
+sudo sshd -t
 sudo systemctl daemon-reload
 sudo systemctl restart ssh.socket
 sudo systemctl restart ssh.service 2>/dev/null || true
+sudo systemctl is-active --quiet ssh.socket || {
+  echo "    ssh.socket not active after restart; check /etc/ssh/sshd_config.d/50-hardening.conf" >&2
+  exit 1
+}
+echo "    sshd reloaded with hardened config."
 
 # ------------------------------------------------------------
 # 8. (Optional) UFW firewall
 # ------------------------------------------------------------
 # Firewall setup is opt-in: deny all incoming by default, allow
 # outgoing, then explicitly open the ports you need. ssh is
-# always allowed first so you can't lock yourself out.
+# always allowed first so you can't lock yourself out. These
+# scripts never move sshd off port 22, so `ufw allow ssh` and a
+# cloud security group for 22 are all that's needed.
 read -rp "Set up the UFW firewall? (y/N): " SETUP_UFW || true
 if [[ "${SETUP_UFW,,}" == "y" ]]; then
   echo "### Setting up UFW firewall ###"
@@ -282,11 +355,15 @@ if [[ "${INSTALL_SQUID,,}" == "y" ]]; then
   read -rp "    IP allowed without login [${SSH_CLIENT_IP:-none}]: " SQUID_IP || true
   SQUID_IP="${SQUID_IP:-$SSH_CLIENT_IP}"
 
-  read -rp "    Proxy username [johnfire]: " SQUID_USER || true
-  SQUID_USER="${SQUID_USER:-johnfire}"
-  read -rsp "    Proxy password [johnfire]: " SQUID_PASS || true
-  SQUID_PASS="${SQUID_PASS:-johnfire}"
+  read -rp "    Proxy username: " SQUID_USER || true
+  read -rsp "    Proxy password: " SQUID_PASS || true
   echo
+
+  # No default credentials: an open proxy on 3128 is an abuse target.
+  if [ -z "$SQUID_USER" ] || [ -z "$SQUID_PASS" ]; then
+    echo "    Proxy username and password are required; aborting Squid setup. Re-run to retry." >&2
+    exit 1
+  fi
 
   # htpasswd-format password file consumed by basic_ncsa_auth.
   # The password is fed on stdin (twice, as htpasswd asks for it
@@ -343,11 +420,21 @@ EOF
       sudo install -m 0644 -o root -g root "$NEW_CONF" /etc/squid/squid.conf
     else
       # No deny-all line to anchor on (unexpected); append and
-      # make sure we still end with a blanket deny.
-      cat "$BLOCK_FILE" >> /etc/squid/squid.conf
-      echo "http_access deny all" >> /etc/squid/squid.conf
+      # make sure we still end with a blanket deny. Append via
+      # sudo tee since /etc/squid/squid.conf is root-owned.
+      { cat "$BLOCK_FILE"; echo "http_access deny all"; } \
+        | sudo tee -a /etc/squid/squid.conf >/dev/null
     fi
     rm -f "$BLOCK_FILE" "$NEW_CONF"
+
+    # Validate before restarting; abort and restore the backup on
+    # a parse error rather than taking down the proxy with a bad
+    # config.
+    if ! sudo squid -k parse 2>&1; then
+      echo "    Squid config failed validation; restoring backup." >&2
+      sudo cp /etc/squid/squid.conf.bak /etc/squid/squid.conf
+      exit 1
+    fi
     echo "    Updated /etc/squid/squid.conf (backup at squid.conf.bak)."
   else
     echo "    Config already contains auth rules, skipping."

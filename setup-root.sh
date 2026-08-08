@@ -35,6 +35,11 @@ if [[ ! "$NEW_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
   echo "Invalid username: $NEW_USER (lowercase letters, digits, - and _ only)" >&2
   exit 1
 fi
+# Linux caps usernames (login.defs default 32 chars); reject longer.
+if [ "${#NEW_USER}" -gt 32 ]; then
+  echo "Invalid username: $NEW_USER (must be 32 characters or fewer)" >&2
+  exit 1
+fi
 
 # ------------------------------------------------------------
 # Create the user + password
@@ -42,10 +47,18 @@ fi
 # -m       create a home directory
 # -s bash  use bash as the initial shell (zsh comes later)
 # -G sudo  add the user to the sudo group
-# Idempotent: skips creation (but still resets the password) if
+# Idempotent: skips creation (but still asks about the password) if
 # the user already exists.
 echo "### Creating sudo user $NEW_USER ###"
+USER_EXISTED=0
 if id "$NEW_USER" &>/dev/null; then
+  USER_EXISTED=1
+  # Refuse to operate on system accounts: typing "nobody" or "sync"
+  # here would otherwise reset a system account's password.
+  if [ "$(id -u "$NEW_USER")" -lt 1000 ]; then
+    echo "Refusing: $NEW_USER is a system account (UID < 1000)." >&2
+    exit 1
+  fi
   echo "    User $NEW_USER already exists, skipping creation."
 else
   useradd -m -s /bin/bash -G sudo "$NEW_USER"
@@ -64,7 +77,16 @@ fi
 # allowed at this point -- it's the only way in until
 # setup-ssh.sh installs the host key and setup-user.sh runs
 # the final sshd hardening step.
-passwd "$NEW_USER"
+if [ "$USER_EXISTED" -eq 1 ]; then
+  read -rp "    User $NEW_USER already exists. Reset its password? (y/N): " RESET_PW || true
+  if [[ "${RESET_PW,,}" != "y" ]]; then
+    echo "    Keeping the existing password."
+  else
+    passwd "$NEW_USER"
+  fi
+else
+  passwd "$NEW_USER"
+fi
 
 echo ""
 echo "### Part 1 done. ###"
