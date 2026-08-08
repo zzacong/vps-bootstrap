@@ -84,7 +84,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/ma
 6. **Dotfiles (yadm bootstrap)** — backs up the **skel defaults** (`~/.zshrc`, `~/.bashrc`, …) into `~/.bootstrap-backup-*` rather than deleting them, so a failed clone leaves a usable shell. Loads the deploy key into a script-local ssh-agent, pre-seeds GitHub's pinned host key, then `yadm clone`s your dotfiles. Finally runs vim-plug against your `init.vim`.
 7. **sshd hardening (the last mandatory step)** — writes the **hardening drop-in** `/etc/ssh/sshd_config.d/50-hardening.conf` (`PermitRootLogin no`, `PasswordAuthentication no`, key-only, `AllowUsers` scoped to you). It refuses to run if there's no key in `authorized_keys`, asks you to confirm key login works from a *second terminal*, validates with `sshd -t` before reloading, and handles socket-activated sshd.
 8. **(Optional) UFW firewall** — deny incoming by default, allow outgoing; SSH always allowed first, optionally ports 80/443.
-9. **(Optional) Squid proxy** — caching HTTP(S) proxy on port 3128, locked down with an htpasswd file (and optionally one whitelisted IP). Config is parse-validated before restart and inserted before Squid's default `deny all`.
+9. **(Optional) Squid proxy** — caching HTTP(S) proxy on port 3128, locked down with an htpasswd file (and optionally one whitelisted IP). Config is parse-validated before restart and inserted before Squid's default `deny all`. Available standalone as `setup-squid.sh` if you want to re-run or fix just the proxy config without redoing step 3.
 
 If a reboot is pending (kernel update), it tells you.
 
@@ -126,7 +126,7 @@ The Mac flow is **zsh, not bash** — a fresh Mac's `/bin/zsh` is always a recen
 | `setup-root.sh` | Step 1 (VPS) — create the sudo user (as root) |
 | `setup-ssh.sh` | Step 2 (VPS) — host key + GitHub deploy key (as root) |
 | `setup-user.sh` | Step 3 (VPS) — packages, shell, dotfiles, hardening, optional firewall/proxy (as new user) |
+| `setup-squid.sh` | Standalone extract of setup-user.sh's optional Squid section, for re-running/fixing just the proxy config |
 | `setup-mac.sh` | Mac — CLT, Homebrew, shell, formulas, fnm/Node, host key, dotfiles (as the user) |
-| `zshrc.ubuntu` | Reference zshrc the dotfiles repo grew from; kept here as the seed |
 | `CONTEXT.md` | Shared vocabulary for the scripts (host key, deploy key, askpass helper, …) |
 | `docs/adr/` | Design decision records (e.g. deploy key passphrase policy, Mac Keychain policy) |
