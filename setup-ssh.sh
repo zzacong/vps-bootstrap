@@ -203,11 +203,17 @@ if [[ "${TEST_GH,,}" == "y" ]]; then
   eval "$(ssh-agent -s)"
   setup_askpass "${SSH_KEY_PASS:-}"
   SSH_ASKPASS="$ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force ssh-add "$USER_HOME/.ssh/id_ed25519"
-  if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-    -T git@github.com 2>&1 | grep -qi "successfully authenticated"; then
+  # Capture the actual ssh output instead of piping it into grep:
+  # the pipe would swallow the real error ("Permission denied
+  # (publickey)" vs a network failure) and leave only a generic
+  # "failed" message behind.
+  GH_OUTPUT="$(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 || true)"
+  if printf '%s' "$GH_OUTPUT" | grep -qi "successfully authenticated"; then
     echo "    GitHub auth OK."
   else
-    echo "    GitHub auth failed or inconclusive; fix the key before running setup-user.sh." >&2
+    echo "    GitHub auth failed. Raw ssh output:" >&2
+    printf '      %s\n' "$GH_OUTPUT" >&2
+    echo "    Fix the key (is it pasted into GitHub, on the right account?) before running setup-user.sh." >&2
     ssh-agent -k >/dev/null 2>&1 || true
     exit 1
   fi
