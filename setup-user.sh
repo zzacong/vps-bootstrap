@@ -301,24 +301,6 @@ fi
 setup_askpass "$SSH_KEY_PASS"
 SSH_ASKPASS="$ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force ssh-add "$HOME/.ssh/id_ed25519"
 
-# oh-my-zsh wrote a default .zshrc; back up every shell file we
-# might collide with and move them aside so yadm's versions win
-# without destroying anything. Nothing is deleted -- the originals
-# are recoverable from $BACKUP_DIR.
-echo "### Moving existing shell files out of the way (backed up) ###"
-BACKUP_DIR="$HOME/.bootstrap-backup-$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$BACKUP_DIR"
-for file in .zshrc .bashrc .bash_profile .profile .bash_logout; do
-  if [ -e "$HOME/$file" ]; then
-    mv "$HOME/$file" "$BACKUP_DIR/$file"
-  fi
-done
-if [ "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
-  echo "    Backed up to $BACKUP_DIR"
-else
-  rmdir "$BACKUP_DIR"
-fi
-
 # yadm clones over SSH; pre-seed known_hosts so the first
 # connection to github.com doesn't prompt for host confirmation
 # and hang in a non-interactive context. Pin GitHub's published
@@ -333,7 +315,15 @@ fi
 chmod 600 "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
 echo "### Cloning dotfiles with yadm ###"
-if [ -d "$HOME/.config/yadm/repo.git" ]; then
+# yadm 3.x keeps its bare repo under XDG data (~/.local/share/yadm),
+# while older versions used ~/.config/yadm. Check the real location
+# so a re-run doesn't try to clone over an existing repo.
+YADM_REPO_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/yadm/repo.git"
+if [ ! -d "$YADM_REPO_DIR" ]; then
+  YADM_REPO_DIR="$HOME/.config/yadm/repo.git"
+fi
+
+if [ -d "$YADM_REPO_DIR" ]; then
   echo "    yadm already bootstrapped."
   # Verify the remote is the repo we expect, and refuse to pull
   # over uncommitted local changes (yadm pull would fail or merge
@@ -347,12 +337,35 @@ if [ -d "$HOME/.config/yadm/repo.git" ]; then
     yadm pull
     echo "    Pulled latest."
   fi
-elif yadm clone -b main "$DOTFILES_REPO"; then
-  echo "    Dotfiles cloned."
 else
-  echo "    yadm clone failed (tracked file colliding with a skel default?); restore with:" >&2
-  echo "      cp -a ${BACKUP_DIR:-?}/. \$HOME/" >&2
-  exit 1
+  # Only a fresh bootstrap needs this: oh-my-zsh and the skel
+  # defaults wrote shell files that would collide with (and block)
+  # the clone. Move them aside so yadm's versions win without
+  # destroying anything -- nothing is deleted, the originals stay
+  # in $BACKUP_DIR. On a re-run this block is skipped because the
+  # shell files are already yadm-managed (moving them would dirty
+  # the repo and leave you without a .zshrc).
+  echo "### Moving existing shell files out of the way (backed up) ###"
+  BACKUP_DIR="$HOME/.bootstrap-backup-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$BACKUP_DIR"
+  for file in .zshrc .bashrc .bash_profile .profile .bash_logout; do
+    if [ -e "$HOME/$file" ]; then
+      mv "$HOME/$file" "$BACKUP_DIR/$file"
+    fi
+  done
+  if [ "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
+    echo "    Backed up to $BACKUP_DIR"
+  else
+    rmdir "$BACKUP_DIR"
+  fi
+
+  if yadm clone -b main "$DOTFILES_REPO"; then
+    echo "    Dotfiles cloned."
+  else
+    echo "    yadm clone failed (tracked file colliding with a skel default?); restore with:" >&2
+    echo "      cp -a ${BACKUP_DIR:-?}/. \$HOME/" >&2
+    exit 1
+  fi
 fi
 
 # Install the plugins listed in ~/.config/nvim/init.vim. This
