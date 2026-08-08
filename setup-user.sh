@@ -221,12 +221,12 @@ fi
 # ------------------------------------------------------------
 # 4. Node via fnm (node version manager)
 # ------------------------------------------------------------
-# ~/.zshrc lists the `fnm` plugin and the `corepackup`/pnpm
-# helpers, so node is needed. fnm installs to
-# ~/.local/share/fnm; symlink it into ~/.local/bin (which
-# ~/.zshrc already puts on PATH) and grab the latest LTS node.
-# --skip-shell stops the installer from appending its own
-# `eval "$(fnm env)"` block to ~/.bashrc, which we don't manage.
+# ~/.zshrc lists the `fnm` plugin and pnpm, so node is needed.
+# fnm installs to ~/.local/share/fnm; symlink it into
+# ~/.local/bin (which ~/.zshrc already puts on PATH) and grab
+# the latest LTS node. --skip-shell stops the installer from
+# appending its own `eval "$(fnm env)"` block to ~/.bashrc,
+# which we don't manage.
 echo "### Installing fnm and latest LTS Node ###"
 if [ ! -x "$HOME/.local/bin/fnm" ]; then
   curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell
@@ -242,11 +242,32 @@ fi
 "$HOME/.local/bin/fnm" install --lts
 "$HOME/.local/bin/fnm" default lts-latest
 
-# Put fnm's node on PATH for this shell and confirm node and
-# corepack actually work (setup-user.sh relies on node later).
+# Put fnm's node on PATH for this shell and confirm node actually
+# works (setup-user.sh relies on node later).
 eval "$("$HOME/.local/bin/fnm" env)"
 node --version
-corepack --version
+
+# pnpm: the standalone installer (the preferred method on Linux)
+# is used rather than corepack, which newer Node LTS no longer
+# ships. It installs to $PNPM_HOME/bin (a cmd-shim that resolves
+# its real binary relative to that dir, so it must NOT be
+# symlinked elsewhere) and appends a PATH block to the shell rc
+# it detects; we keep our own PATH story instead -- the dotfiles'
+# .zshrc exports PNPM_HOME and puts $PNPM_HOME/bin on PATH -- so
+# just export it into this script's shell for the checks below.
+echo "### Installing pnpm ###"
+export PNPM_HOME="$HOME/.local/share/pnpm"
+export PATH="$PNPM_HOME/bin:$PATH"
+if [ ! -x "$PNPM_HOME/bin/pnpm" ]; then
+  curl -fsSL https://get.pnpm.io/install.sh | sh -
+  if [ ! -x "$PNPM_HOME/bin/pnpm" ]; then
+    echo "    pnpm install failed; binary missing at $PNPM_HOME/bin/pnpm." >&2
+    exit 1
+  fi
+else
+  echo "    pnpm already installed, skipping download."
+fi
+pnpm --version
 
 # ------------------------------------------------------------
 # 5. Make zsh the default shell
@@ -654,7 +675,7 @@ fi
 
 echo ""
 echo "### Final environment check ###"
-for command in zsh nvim fd bat fnm node npm corepack yadm; do
+for command in zsh nvim fd bat fnm node npm pnpm yadm; do
   if command -v "$command" >/dev/null 2>&1; then
     echo "    OK  $command"
   else

@@ -1,4 +1,13 @@
-# VPS Bootstrap
+# Machine Bootstrap
+
+Two provisioning flows, both converging on the same shell (zsh + oh-my-zsh + spaceship), editor (neovim + vim-plug), Node (fnm), and yadm-managed dotfiles:
+
+- **[VPS flow](#vps-flow)** — a fresh Ubuntu VPS (24.04+), three scripts in order.
+- **[Mac flow](#mac-flow)** — a new MacBook, one script.
+
+Everything user-level lives in `zzacong/dotfiles`, managed by yadm; this repo only *bootstraps* the machine.
+
+## VPS flow
 
 Turns a fresh Ubuntu VPS (24.04+) into a usable dev box. You run three scripts in order on the box: create a sudo user, wire up SSH keys, then install everything else — shell, editor, node, dotfiles — and lock SSH down.
 
@@ -17,7 +26,7 @@ Each step fetches the script with `bash -c "$(curl -fsSL <url>)"`. That form kee
 - Key-only SSH: **host key** (your laptop's) for logging in, **GitHub deploy key** (generated on the server) for the dotfiles clone
 - **zsh + oh-my-zsh** with autosuggestions, syntax highlighting, and the spaceship prompt
 - **neovim** with vim-plug (plugins come from your dotfiles), **fd**, **bat**, **ripgrep**, **lf**, **yadm**
-- **Node** (latest LTS) via **fnm**, with corepack/pnpm
+- **Node** (latest LTS) via **fnm**, with **pnpm** (brew on Mac, standalone installer on Linux)
 - Optionally: UFW firewall and a Squid proxy
 - Your **dotfiles** cloned from `git@github.com:zzacong/dotfiles.git` — everything user-level lives there, so this repo only *bootstraps* the box
 
@@ -79,6 +88,30 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/ma
 
 If a reboot is pending (kernel update), it tells you.
 
+## Mac flow
+
+Turns a brand-new MacBook into a usable dev box in one script. Unlike the VPS there's no root/user/key split — the Mac is your own machine, so everything runs as your normal login. It happens rarely (a new MacBook), but when it does the script is safe to re-run.
+
+```bash
+zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/main/setup-mac.sh)"
+```
+
+The Mac flow is **zsh, not bash** — a fresh Mac's `/bin/zsh` is always a recent 5.x, while its `/bin/bash` is frozen at 3.2 (2007) until Homebrew replaces it. zsh is the only guaranteed-modern interpreter on a new Mac. `zsh -c "$(curl …)"` also keeps your terminal as the script's stdin (same reason the VPS flow uses `bash -c`), so the interactive prompts work.
+
+**What it does**, in order:
+
+1. **Xcode Command Line Tools** — installs via a one-click GUI dialog (`xcode-select --install`) and waits for it to finish; Homebrew needs the compiler toolchain.
+2. **Homebrew** — non-interactive install (Apple Silicon or Intel, whichever the Mac is).
+3. **Shell env** — oh-my-zsh (unattended), autosuggestions + syntax-highlighting plugins, spaceship prompt. zsh is already the default on macOS, so no `chsh` needed.
+4. **Brew formulas** — `neovim bat ripgrep fd lf yadm` (the VPS core) plus `gh lazygit git-delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx fnm`. macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
+5. **Neovim** — vim-plug, plus the undodir `init.vim` expects.
+6. **Node via fnm** — installed via Homebrew, latest LTS made the default.
+7. **Host key** — generates an ed25519 key *on the Mac*, prints the public half, and pauses while you add it to GitHub. Unlike the VPS there is **no deploy key**: the Mac's own key authenticates to GitHub.
+8. **Keychain** — the key's passphrase is stored in the macOS Keychain (`ssh-add --apple-use-keychain`) so it survives reboots (ADR-0002).
+9. **Dotfiles (yadm bootstrap)** — backs up the shell files oh-my-zsh/Homebrew wrote, pre-seeds GitHub's pinned host key, `yadm clone`s your dotfiles, then runs vim-plug against your `init.vim`.
+
+**Manual step — add the key to GitHub** (Settings → SSH and GPG keys) when the script pauses. Without it the dotfiles clone can't authenticate.
+
 ## Coming back after three months
 
 - **This repo is only the bootstrap.** Your shell, editor, aliases, and git config are not here — they're in `zzacong/dotfiles`, managed by yadm on the box (`yadm status`, `yadm push`). This repo is what you'd run on the *next* fresh VPS.
@@ -90,9 +123,10 @@ If a reboot is pending (kernel update), it tells you.
 
 | File | Purpose |
 |---|---|
-| `setup-root.sh` | Step 1 — create the sudo user (as root) |
-| `setup-ssh.sh` | Step 2 — host key + GitHub deploy key (as root) |
-| `setup-user.sh` | Step 3 — packages, shell, dotfiles, hardening, optional firewall/proxy (as new user) |
+| `setup-root.sh` | Step 1 (VPS) — create the sudo user (as root) |
+| `setup-ssh.sh` | Step 2 (VPS) — host key + GitHub deploy key (as root) |
+| `setup-user.sh` | Step 3 (VPS) — packages, shell, dotfiles, hardening, optional firewall/proxy (as new user) |
 | `setup-squid.sh` | Standalone extract of setup-user.sh's optional Squid section, for re-running/fixing just the proxy config |
-| `CONTEXT.md` | Shared vocabulary for the scripts (new user, host key, deploy key, askpass helper, …) |
-| `docs/adr/` | Design decision records (e.g. why the deploy key passphrase policy is what it is) |
+| `setup-mac.sh` | Mac — CLT, Homebrew, shell, formulas, fnm/Node, host key, dotfiles (as the user) |
+| `CONTEXT.md` | Shared vocabulary for the scripts (host key, deploy key, askpass helper, …) |
+| `docs/adr/` | Design decision records (e.g. deploy key passphrase policy, Mac Keychain policy) |
