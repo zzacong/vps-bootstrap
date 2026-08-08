@@ -31,8 +31,17 @@ read -rp "Username for new sudo user [$DEFAULT_USER]: " NEW_USER || true
 NEW_USER="${NEW_USER:-$DEFAULT_USER}"
 
 # Reject anything that would break useradd or the later paths.
-if [[ ! "$NEW_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
-  echo "Invalid username: $NEW_USER (lowercase letters, digits, - and _ only)" >&2
+# useradd also enforces its own limits (max 32 chars, and it
+# forbids some reserved names), so double-check the obvious ones.
+if [[ ! "$NEW_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || (( ${#NEW_USER} > 32 )); then
+  echo "Invalid username: $NEW_USER (lowercase letters, digits, - and _ only, max 32 chars)" >&2
+  exit 1
+fi
+# Refuse reserved system account names outright -- typing "root",
+# "sync" or "nobody" here would otherwise hit a system account.
+if [[ "$NEW_USER" == "root" ]] || \
+   [[ "$NEW_USER" =~ ^(daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|www-data|backup|list|irc|gnats|nobody|nobody4|halt|shutdown|operator|systemd-.*|_.*)$ ]]; then
+  echo "Refusing reserved system account name: $NEW_USER" >&2
   exit 1
 fi
 
@@ -42,20 +51,37 @@ fi
 # -m       create a home directory
 # -s bash  use bash as the initial shell (zsh comes later)
 # -G sudo  add the user to the sudo group
-# Idempotent: skips creation (but still resets the password) if
-# the user already exists.
+# Never silently modify an existing account: resetting a
+# password on an existing admin/service account without consent
+# is dangerous. Ask first, and bail out if not confirmed.
 echo "### Creating sudo user $NEW_USER ###"
 if id "$NEW_USER" &>/dev/null; then
-  echo "    User $NEW_USER already exists, skipping creation."
+  # Refuse to operate on system accounts: typing "nobody" or
+  # "sync" here would otherwise reset a system account's password.
+  if [ "$(id -u "$NEW_USER")" -lt 1000 ]; then
+    echo "Refusing: $NEW_USER is a system account (UID < 1000)." >&2
+    exit 1
+  fi
+  echo "    User $NEW_USER already exists."
+  read -rp "    Reset its password anyway? (y/N): " RESET_PASS || true
+  if [[ "${RESET_PASS,,}" != "y" ]]; then
+    echo "    Not changing anything. Re-run if you meant to touch this account." >&2
+    exit 1
+  fi
 else
   useradd -m -s /bin/bash -G sudo "$NEW_USER"
 fi
 
 # Double-check the user actually landed in the sudo group and
-# add them if not, so setup-user.sh can use sudo.
+# add them if not, so setup-user.sh can use sudo. Verify sudo is
+# installed first: minimal images may not ship it.
 if id -nG "$NEW_USER" | grep -qw sudo; then
   echo "    $NEW_USER is in the sudo group."
 else
+  command -v sudo >/dev/null 2>&1 || {
+    echo "sudo is not installed; run: apt-get install -y sudo" >&2
+    exit 1
+  }
   usermod -aG sudo "$NEW_USER"
   echo "    Added $NEW_USER to the sudo group."
 fi
@@ -63,12 +89,16 @@ fi
 # Set the user's password now. Password SSH login is still
 # allowed at this point -- it's the only way in until
 # setup-ssh.sh installs the host key and setup-user.sh runs
-# the final sshd hardening step.
+# the final sshd hardening step. Treat it as temporary: it will
+# be disabled once key-only auth is confirmed.
+echo "    Note: this password is TEMPORARY -- setup-user.sh disables password SSH login."
 passwd "$NEW_USER"
 
 echo ""
 echo "### Part 1 done. ###"
-echo "Next, run the SSH setup (still as root):"
+echo "Next, still as root, run the SSH setup:"
 echo "  bash setup-ssh.sh"
-echo "Then log out, log in as $NEW_USER from your host machine, and run:"
+echo "Then, from your host machine, log in as $NEW_USER:"
+echo "  ssh $NEW_USER@<host-ip-or-name>"
+echo "And finally, run the user setup:"
 echo "  bash setup-user.sh"

@@ -20,10 +20,6 @@ set -euo pipefail
 # added to GitHub by setup-ssh.sh.
 DOTFILES_REPO="git@github.com:zzacong/dotfiles.git"
 
-# Default passphrase for the GitHub SSH key -- must match what
-# setup-ssh.sh used, or was chosen when the key was generated.
-DEFAULT_SSH_PASS="Ddld1019."
-
 # This whole script must run as the new user, not root,
 # otherwise everything gets installed into /root instead.
 if [ "$(id -u)" -eq 0 ]; then
@@ -36,6 +32,71 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 
 # ------------------------------------------------------------
+# Cleanup + helper plumbing
+# ------------------------------------------------------------
+# Bail out up front if a required tool is missing, instead of
+# discovering it halfway through.
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Required command not found: $1" >&2
+    exit 1
+  }
+}
+require_command sudo
+require_command apt-get
+require_command curl
+require_command ssh
+require_command ssh-keygen
+
+# One EXIT trap drives everything: removes the temp files that
+# hold the SSH passphrase, kills the sudo keep-alive loop, and
+# stops the script-local ssh-agent so the decrypted private key
+# doesn't linger in memory after the script ends.
+CLEANUP_FILES=()
+SUDO_KEEPALIVE_PID=""
+cleanup() {
+  local f
+  for f in "${CLEANUP_FILES[@]:-}"; do
+    rm -f "$f"
+  done
+  if [ -n "$SUDO_KEEPALIVE_PID" ]; then
+    kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+  fi
+  if [ -n "${SSH_AGENT_PID:-}" ]; then
+    kill "$SSH_AGENT_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+# Feed a passphrase to ssh-keygen/ssh-add via SSH_ASKPASS so it
+# never appears on a command line or gets interpolated into script
+# source: the secret lives in a 0600 temp file that a tiny helper
+# cats on demand. OpenSSH >= 8.4 honours SSH_ASKPASS_REQUIRE=force.
+setup_askpass() {
+  local helper passfile
+  helper="$(mktemp)"
+  passfile="$(mktemp)"
+  chmod 600 "$passfile"
+  printf '%s' "$1" > "$passfile"
+  printf '#!/bin/sh\ncat "%s"\n' "$passfile" > "$helper"
+  chmod 700 "$helper"
+  CLEANUP_FILES+=("$helper" "$passfile")
+  ASKPASS_HELPER="$helper"
+}
+
+# The long run below calls sudo many times; keep the credential
+# timestamp fresh so a later sudo can't suddenly prompt (or fail
+# under `set -e`) mid-script. The trap above kills it on exit.
+sudo -v
+(
+  while :; do
+    sudo -n true || exit 0
+    sleep 60
+  done
+) &
+SUDO_KEEPALIVE_PID=$!
+
+# ------------------------------------------------------------
 # 1. System packages (via sudo)
 # ------------------------------------------------------------
 # The new user has sudo rights, so the apt work now lives here
@@ -46,13 +107,35 @@ export DEBIAN_FRONTEND=noninteractive
 #   lf             -> available since Ubuntu 23.04
 #   lsof           -> used by the `runp` alias in ~/.zshrc
 #   unzip          -> required by the fnm installer (step 4)
-echo "### Updating and upgrading apt packages ###"
+#   python3        -> used to validate the optional Squid IP
+echo "### Updating apt packages ###"
 sudo apt-get update
-sudo apt-get upgrade -y
+
+# A full upgrade is optional: it can pull in a kernel update and
+# force a reboot, and it's slow. Ask instead of doing it blindly.
+read -rp "Run a full 'sudo apt-get upgrade'? (y/N): " RUN_UPGRADE || true
+if [[ "${RUN_UPGRADE,,}" =~ ^y(es)?$ ]]; then
+  sudo apt-get upgrade -y
+fi
 
 echo "### Installing zsh, neovim, fd-find, bat, ripgrep, lf, yadm ###"
 sudo apt-get install -y --no-install-recommends \
-  zsh neovim fd-find bat ripgrep lf yadm git curl lsof unzip
+  zsh neovim fd-find bat ripgrep lf yadm git curl lsof unzip python3
+
+# Verify the packages actually landed (minimal images and future
+# releases can rename or drop them).
+echo "### Verifying installed commands ###"
+MISSING=""
+for command in zsh nvim fdfind batcat rg lf yadm git curl lsof unzip python3; do
+  if ! command -v "$command" >/dev/null 2>&1; then
+    echo "    Missing command: $command" >&2
+    MISSING="$MISSING $command"
+  fi
+done
+if [ -n "$MISSING" ]; then
+  echo "    Missing:$MISSING -- fix the apt install, then re-run." >&2
+  exit 1
+fi
 
 # ------------------------------------------------------------
 # 2. Shell environment: oh-my-zsh + plugins + theme
@@ -88,6 +171,12 @@ else
   echo "    Already cloned, skipping."
 fi
 
+# OMZ resolves `ZSH_THEME="spaceship"` against
+# themes/spaceship.zsh-theme; the spaceship repo ships one, so
+# link it into the themes dir.
+ln -sf "$ZSH_CUSTOM_DIR/themes/spaceship-prompt/spaceship.zsh-theme" \
+  "$ZSH_CUSTOM_DIR/themes/spaceship.zsh-theme"
+
 # ------------------------------------------------------------
 # 3. Neovim: vim-plug + renamed binary symlinks + undodir
 # ------------------------------------------------------------
@@ -107,8 +196,22 @@ mkdir -p "$HOME/.local/share/nvim/undodir"
 # release that does ship proper `fd`/`bat`.
 echo "### Ensuring fd/bat commands exist in ~/.local/bin ###"
 mkdir -p "$HOME/.local/bin"
-command -v fd  >/dev/null 2>&1 || ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
-command -v bat >/dev/null 2>&1 || ln -sf "$(command -v batcat)" "$HOME/.local/bin/bat"
+if ! command -v fd >/dev/null 2>&1; then
+  if command -v fdfind >/dev/null 2>&1; then
+    ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
+  else
+    echo "    fd/fdfind was not installed." >&2
+    exit 1
+  fi
+fi
+if ! command -v bat >/dev/null 2>&1; then
+  if command -v batcat >/dev/null 2>&1; then
+    ln -sf "$(command -v batcat)" "$HOME/.local/bin/bat"
+  else
+    echo "    bat/batcat was not installed." >&2
+    exit 1
+  fi
+fi
 
 # ------------------------------------------------------------
 # 4. Node via fnm (node version manager)
@@ -120,10 +223,25 @@ command -v bat >/dev/null 2>&1 || ln -sf "$(command -v batcat)" "$HOME/.local/bi
 # --skip-shell stops the installer from appending its own
 # `eval "$(fnm env)"` block to ~/.bashrc, which we don't manage.
 echo "### Installing fnm and latest LTS Node ###"
-curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell
-mkdir -p "$HOME/.local/bin"
-ln -sf "$HOME/.local/share/fnm/fnm" "$HOME/.local/bin/fnm"
+if [ ! -x "$HOME/.local/bin/fnm" ]; then
+  curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$HOME/.local/share/fnm/fnm" "$HOME/.local/bin/fnm"
+  if ! test -x "$HOME/.local/bin/fnm"; then
+    echo "    fnm install failed; binary missing at ~/.local/share/fnm/fnm." >&2
+    exit 1
+  fi
+else
+  echo "    fnm already installed, skipping download."
+fi
 "$HOME/.local/bin/fnm" install --lts
+"$HOME/.local/bin/fnm" default lts-latest
+
+# Put fnm's node on PATH for this shell and confirm node and
+# corepack actually work (setup-user.sh relies on node later).
+eval "$("$HOME/.local/bin/fnm" env)"
+node --version
+corepack --version
 
 # ------------------------------------------------------------
 # 5. Make zsh the default shell
@@ -145,60 +263,95 @@ if [ ! -f "$HOME/.ssh/id_ed25519" ]; then
   # Owner-only rwx on the dir so ssh doesn't warn "unprotected
   # private key file" and no other user can list its contents.
   chmod 700 "$HOME/.ssh"
-  read -rsp "    Passphrase for the new SSH key [$DEFAULT_SSH_PASS]: " SSH_KEY_PASS || true
-  SSH_KEY_PASS="${SSH_KEY_PASS:-$DEFAULT_SSH_PASS}"
+  read -rsp "    Passphrase for the new SSH key (required): " SSH_KEY_PASS || true
   echo
-  ssh-keygen -t ed25519 -N "$SSH_KEY_PASS" -C "$(whoami)@$(hostname)" -f "$HOME/.ssh/id_ed25519"
+  read -rsp "    Confirm passphrase: " SSH_KEY_PASS_CONFIRM || true
+  echo
+  if [ -z "$SSH_KEY_PASS" ]; then
+    echo "    Passphrase cannot be empty." >&2
+    exit 1
+  fi
+  if [[ "$SSH_KEY_PASS" != "$SSH_KEY_PASS_CONFIRM" ]]; then
+    echo "    Passphrases do not match." >&2
+    exit 1
+  fi
+  setup_askpass "$SSH_KEY_PASS"
+  SSH_ASKPASS="$ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force \
+    ssh-keygen -t ed25519 -C "$(whoami)@$(hostname)" -f "$HOME/.ssh/id_ed25519"
   echo "    Add this public key to GitHub:"
   cat "$HOME/.ssh/id_ed25519.pub"
   read -rp "    Press Enter once it's added to GitHub: " _IGNORED || true
 fi
 
-# The key has a passphrase by default, so load it into an
-# ssh-agent (spawned just for this script) before the yadm
-# clone below, otherwise the first SSH connection to github.com
-# would prompt for the passphrase and hang. The agent only lives
-# as long as this script does.
+# The key has a passphrase, so load it into an ssh-agent
+# (spawned just for this script, killed on exit by the trap
+# above) before the yadm clone below, otherwise the first SSH
+# connection to github.com would prompt for the passphrase and
+# hang.
 echo "### Loading SSH key into ssh-agent ###"
 eval "$(ssh-agent -s)"
 if [ -z "${SSH_KEY_PASS:-}" ]; then
-  read -rsp "    SSH key passphrase [$DEFAULT_SSH_PASS]: " SSH_KEY_PASS || true
-  SSH_KEY_PASS="${SSH_KEY_PASS:-$DEFAULT_SSH_PASS}"
+  read -rsp "    SSH key passphrase (required): " SSH_KEY_PASS || true
   echo
+  if [ -z "$SSH_KEY_PASS" ]; then
+    echo "    Passphrase cannot be empty." >&2
+    exit 1
+  fi
 fi
-SSH_ASKPASS_HELPER="$(mktemp)"
-printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$SSH_KEY_PASS" > "$SSH_ASKPASS_HELPER"
-# Make the helper executable so ssh-add can run it as a program
-# (SSH_ASKPASS expects a path to an executable).
-chmod +x "$SSH_ASKPASS_HELPER"
-SSH_ASKPASS="$SSH_ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force ssh-add "$HOME/.ssh/id_ed25519"
-rm -f "$SSH_ASKPASS_HELPER"
+setup_askpass "$SSH_KEY_PASS"
+SSH_ASKPASS="$ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force ssh-add "$HOME/.ssh/id_ed25519"
 
-# oh-my-zsh wrote a default .zshrc; remove it so yadm's version
-# from the dotfiles repo takes over without conflict. The other
-# /etc/skel files (.bashrc, .profile, .bash_logout) can also
-# collide with files tracked in the dotfiles repo, so clear them
-# too -- zsh is the default shell, so bash's files go unused.
-echo "### Removing default shell files that could collide with yadm ###"
-rm -f "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.bash_logout"
+# oh-my-zsh wrote a default .zshrc; back up every shell file we
+# might collide with and move them aside so yadm's versions win
+# without destroying anything. Nothing is deleted -- the originals
+# are recoverable from $BACKUP_DIR.
+echo "### Moving existing shell files out of the way (backed up) ###"
+BACKUP_DIR="$HOME/.bootstrap-backup-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+for file in .zshrc .bashrc .bash_profile .profile .bash_logout; do
+  if [ -e "$HOME/$file" ]; then
+    mv "$HOME/$file" "$BACKUP_DIR/$file"
+  fi
+done
+if [ "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
+  echo "    Backed up to $BACKUP_DIR"
+else
+  rmdir "$BACKUP_DIR"
+fi
 
 # yadm clones over SSH; pre-seed known_hosts so the first
 # connection to github.com doesn't prompt for host confirmation
-# and hang in a non-interactive context.
+# and hang in a non-interactive context. Pin GitHub's published
+# ed25519 host key (https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints)
+# instead of trusting unauthenticated `ssh-keyscan` output.
 mkdir -p "$HOME/.ssh"
-# Same owner-only rwx as above: keep ssh happy and the dir
-# private for the keys it will hold.
 chmod 700 "$HOME/.ssh"
-ssh-keyscan -t ed25519 github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
+GITHUB_HOST_KEY="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+if ! ssh-keygen -F github.com >/dev/null 2>&1; then
+  echo "$GITHUB_HOST_KEY" >> "$HOME/.ssh/known_hosts"
+fi
+chmod 600 "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
 echo "### Cloning dotfiles with yadm ###"
 if [ -d "$HOME/.config/yadm/repo.git" ]; then
-  echo "    yadm already bootstrapped; pulling latest instead."
-  yadm pull
+  echo "    yadm already bootstrapped."
+  # Verify the remote is the repo we expect, and refuse to pull
+  # over uncommitted local changes (yadm pull would fail or merge
+  # in unpredictable ways).
+  if ! yadm remote -v 2>/dev/null | grep -q "git@github.com:zzacong/dotfiles.git"; then
+    echo "    Warning: yadm remote is not $DOTFILES_REPO; check with 'yadm remote -v'." >&2
+  fi
+  if [ -n "$(yadm status --porcelain 2>/dev/null)" ]; then
+    echo "    Local yadm changes exist; NOT pulling. Review with 'yadm status'." >&2
+  else
+    yadm pull
+    echo "    Pulled latest."
+  fi
 elif yadm clone -b main "$DOTFILES_REPO"; then
   echo "    Dotfiles cloned."
 else
-  echo "    yadm clone failed (tracked file colliding with a skel default?); fix and re-run." >&2
+  echo "    yadm clone failed (tracked file colliding with a skel default?); restore with:" >&2
+  echo "      cp -a ${BACKUP_DIR:-?}/. \$HOME/" >&2
   exit 1
 fi
 
@@ -206,7 +359,7 @@ fi
 # needs init.vim to exist (from the yadm clone just above).
 echo "### Installing neovim plugins via vim-plug ###"
 if [ -f "$HOME/.config/nvim/init.vim" ]; then
-  nvim +'PlugInstall --sync' +qall
+  nvim --headless +'PlugInstall --sync' +qa
 else
   echo "    No ~/.config/nvim/init.vim found; skipping PlugInstall."
 fi
@@ -215,35 +368,85 @@ fi
 # 7. sshd hardening (LAST mandatory step, so keys work first)
 # ------------------------------------------------------------
 # No root login, key-only authentication. Uses a drop-in file
-# (included by Ubuntu's default sshd_config). By now your host
-# machine's key is already in authorized_keys (setup-ssh.sh)
-# and the yadm clone just proved the GitHub key works, so
-# disabling password auth can't lock you out.
+# (included by Ubuntu's default sshd_config). Before touching
+# sshd we require proof that key login works: a verified
+# authorized_keys, and the operator's own confirmation from a
+# second terminal -- that's the only real proof password auth can
+# be turned off without locking anyone out.
 echo "### Hardening sshd (no root login, key-only auth) ###"
-sudo tee /etc/ssh/sshd_config.d/50-hardening.conf >/dev/null <<'EOF'
+
+# Gate on a verified key: if no key is installed, disabling
+# password auth would lock you out of a cloud VPS that has no
+# other way in.
+if [ ! -s "$HOME/.ssh/authorized_keys" ]; then
+  echo "    No keys in ~/.ssh/authorized_keys -- refusing to disable password auth." >&2
+  echo "    Run setup-ssh.sh (as root) to install your host machine's key, then re-run this script." >&2
+  exit 1
+fi
+
+HARDENING_FILE=/etc/ssh/sshd_config.d/50-hardening.conf
+if grep -q "PasswordAuthentication no" "$HARDENING_FILE" 2>/dev/null; then
+  echo "    Already hardened, skipping."
+else
+  read -rp "    Have you confirmed key login works in a SECOND terminal? (y/N): " CONFIRM_KEY_LOGIN || true
+  if [[ "${CONFIRM_KEY_LOGIN,,}" =~ ^y(es)?$ ]]; then
+    # Back up any previous hardening drop-in before replacing it.
+    if [ -f "$HARDENING_FILE" ]; then
+      sudo cp -a "$HARDENING_FILE" "$HARDENING_FILE.bak.$(date +%s)" 2>/dev/null || true
+    fi
+
+    # Restrict sshd to this user so no other local account with
+    # an authorized key (now or in future) can authenticate.
+    sudo tee "$HARDENING_FILE" >/dev/null <<EOF
 PermitRootLogin no
 PasswordAuthentication no
+KbdInteractiveAuthentication no
 PubkeyAuthentication yes
+AllowUsers $USER
 MaxAuthTries 3
 LoginGraceTime 20
 EOF
 
-# sshd is socket-activated on Ubuntu 22.10+: ssh.socket owns
-# port 22 and ssh.service is only spawned on demand. Reload the
-# daemon first so the new drop-in config is picked up, then
-# restart the socket (and the service if it happens to be up).
-sudo systemctl daemon-reload
-sudo systemctl restart ssh.socket
-sudo systemctl restart ssh.service 2>/dev/null || true
+    # Validate the syntax BEFORE touching the running daemon. A
+    # bad drop-in here is the fastest way to lose access to the box.
+    if ! sudo sshd -t; then
+      echo "    sshd configuration is INVALID; NOT reloading ssh. Fix $HARDENING_FILE." >&2
+      exit 1
+    fi
+
+    # Show the effective values (a drop-in only wins if nothing
+    # earlier set the same directive first).
+    echo "    Effective settings:"
+    sudo sshd -T | grep -Ei '^(permitrootlogin|passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication) ' | sed 's/^/      /'
+
+    # Reload instead of restart where possible. Ubuntu 22.10+ uses
+    # socket activation (ssh.socket); detect it rather than assume.
+    if systemctl list-unit-files ssh.socket >/dev/null 2>&1 &&
+      systemctl is-enabled --quiet ssh.socket 2>/dev/null; then
+      sudo systemctl daemon-reload
+      sudo systemctl reload ssh.socket
+    else
+      sudo systemctl reload ssh
+    fi
+    echo "    sshd reloaded with hardened config."
+  else
+    echo "    Skipping sshd hardening. Re-run once key login is confirmed." >&2
+    echo "    Test it first: ssh -o PasswordAuthentication=no $USER@<host>" >&2
+  fi
+fi
 
 # ------------------------------------------------------------
 # 8. (Optional) UFW firewall
 # ------------------------------------------------------------
 # Firewall setup is opt-in: deny all incoming by default, allow
 # outgoing, then explicitly open the ports you need. ssh is
-# always allowed first so you can't lock yourself out.
+# always allowed first so you can't lock yourself out. SSH is
+# left open to anywhere -- the hardening step disables password
+# auth and restricts sshd to this user, so the firewall isn't
+# the security boundary for port 22 (and an IP-scoped rule could
+# lock you out when your source IP changes).
 read -rp "Set up the UFW firewall? (y/N): " SETUP_UFW || true
-if [[ "${SETUP_UFW,,}" == "y" ]]; then
+if [[ "${SETUP_UFW,,}" =~ ^y(es)?$ ]]; then
   echo "### Setting up UFW firewall ###"
   sudo apt-get install -y ufw
   sudo ufw default deny incoming
@@ -251,7 +454,7 @@ if [[ "${SETUP_UFW,,}" == "y" ]]; then
   sudo ufw allow ssh
 
   read -rp "    Also allow HTTP/HTTPS (ports 80, 443)? (y/N): " ALLOW_WEB || true
-  if [[ "${ALLOW_WEB,,}" == "y" ]]; then
+  if [[ "${ALLOW_WEB,,}" =~ ^y(es)?$ ]]; then
     sudo ufw allow 80/tcp
     sudo ufw allow 443/tcp
   fi
@@ -271,34 +474,61 @@ fi
 # checked by squid's basic_ncsa_auth helper). Rules are inserted
 # before the default `http_access deny all` so they take effect.
 read -rp "Also install the Squid proxy server? (y/N): " INSTALL_SQUID || true
-if [[ "${INSTALL_SQUID,,}" == "y" ]]; then
+if [[ "${INSTALL_SQUID,,}" =~ ^y(es)?$ ]]; then
   echo "### Installing Squid proxy ###"
   sudo apt-get install -y squid apache2-utils
   sudo systemctl enable --now squid
 
   # The IP that may use the proxy without logging in. Defaults to
-  # the address you're SSH-ing in from (auto-detected).
-  SSH_CLIENT_IP="${SSH_CLIENT%% *}"
+  # the address you're SSH-ing in from (auto-detected). SSH_CLIENT
+  # is only set inside an SSH session, so guard against it being
+  # unset (it would fail under `set -u`).
+  SSH_CLIENT_IP="${SSH_CLIENT:-}"
+  SSH_CLIENT_IP="${SSH_CLIENT_IP%% *}"
   read -rp "    IP allowed without login [${SSH_CLIENT_IP:-none}]: " SQUID_IP || true
   SQUID_IP="${SQUID_IP:-$SSH_CLIENT_IP}"
 
-  read -rp "    Proxy username [johnfire]: " SQUID_USER || true
-  SQUID_USER="${SQUID_USER:-johnfire}"
-  read -rsp "    Proxy password [johnfire]: " SQUID_PASS || true
-  SQUID_PASS="${SQUID_PASS:-johnfire}"
+  # Validate the IP with Python's ipaddress parser before it lands
+  # in squid.conf. A single host is expected (no CIDR here).
+  if [ -n "$SQUID_IP" ]; then
+    if ! python3 -c 'import ipaddress, sys; ipaddress.ip_address(sys.argv[1])' "$SQUID_IP" 2>/dev/null; then
+      echo "    Invalid IP address: $SQUID_IP" >&2
+      exit 1
+    fi
+  fi
+
+  # No hardcoded credentials: require a username and a non-empty
+  # password, entered twice to catch typos.
+  read -rp "    Proxy username: " SQUID_USER || true
+  if [ -z "$SQUID_USER" ]; then
+    echo "    A proxy username is required." >&2
+    exit 1
+  fi
+  read -rsp "    Proxy password: " SQUID_PASS || true
   echo
+  read -rsp "    Confirm proxy password: " SQUID_PASS_CONFIRM || true
+  echo
+  if [ -z "$SQUID_PASS" ] || [[ "$SQUID_PASS" != "$SQUID_PASS_CONFIRM" ]]; then
+    echo "    Proxy password empty or does not match." >&2
+    exit 1
+  fi
 
   # htpasswd-format password file consumed by basic_ncsa_auth.
   # The password is fed on stdin (twice, as htpasswd asks for it
   # twice) so it never shows up on the command line.
   if [ -f /etc/squid/passwords ]; then
-    echo "    Password file already exists, keeping it."
+    if sudo grep -q "^${SQUID_USER}:" /etc/squid/passwords; then
+      echo "    Password file exists and user $SQUID_USER is present; keeping it."
+    else
+      echo "    Password file exists but has no $SQUID_USER; adding the user."
+      printf '%s\n%s\n' "$SQUID_PASS" "$SQUID_PASS" \
+        | sudo htpasswd /etc/squid/passwords "$SQUID_USER"
+      sudo chown root:proxy /etc/squid/passwords
+      sudo chmod 640 /etc/squid/passwords
+    fi
   else
     printf '%s\n%s\n' "$SQUID_PASS" "$SQUID_PASS" \
       | sudo htpasswd -c /etc/squid/passwords "$SQUID_USER"
-    # Give the squid worker user (proxy) read access to the
-    # password file while keeping it out of the hands of other
-    # system users (root owns it, proxy group can read, 640).
     sudo chown root:proxy /etc/squid/passwords
     sudo chmod 640 /etc/squid/passwords
     echo "    Wrote /etc/squid/passwords for user $SQUID_USER."
@@ -324,39 +554,45 @@ EOF
 )
 
   if ! grep -q "auth_param basic program" /etc/squid/squid.conf; then
-    sudo cp /etc/squid/squid.conf /etc/squid/squid.conf.bak
-
-    # Insert the rules immediately before the default
-    # `http_access deny all` line (the last matching rule), so
-    # they actually take effect. Compose the new file from parts
-    # rather than sed -i so no in-place weirdness with newlines.
-    BLOCK_FILE="$(mktemp)"
-    NEW_CONF="$(mktemp)"
-    printf '%s\n' "$SQUID_AUTH_RULES" > "$BLOCK_FILE"
+    # The allow rules must be inserted before the default
+    # `http_access deny all` line, otherwise they never fire. If
+    # that anchor is missing, refuse to edit rather than guess -- a
+    # silently nonfunctional proxy config is worse than none.
     DENY_LINE=$(grep -n '^http_access deny all$' /etc/squid/squid.conf | head -n1 | cut -d: -f1)
-    if [ -n "$DENY_LINE" ]; then
-      {
-        sed -n "1,$((DENY_LINE - 1))p" /etc/squid/squid.conf
-        cat "$BLOCK_FILE"
-        sed -n "${DENY_LINE},\$p" /etc/squid/squid.conf
-      } > "$NEW_CONF"
-      sudo install -m 0644 -o root -g root "$NEW_CONF" /etc/squid/squid.conf
-    else
-      # No deny-all line to anchor on (unexpected); append and
-      # make sure we still end with a blanket deny.
-      cat "$BLOCK_FILE" >> /etc/squid/squid.conf
-      echo "http_access deny all" >> /etc/squid/squid.conf
+    if [ -z "$DENY_LINE" ]; then
+      echo "    Could not locate Squid's 'http_access deny all' anchor; refusing to edit." >&2
+      exit 1
     fi
-    rm -f "$BLOCK_FILE" "$NEW_CONF"
-    echo "    Updated /etc/squid/squid.conf (backup at squid.conf.bak)."
+
+    sudo cp /etc/squid/squid.conf "/etc/squid/squid.conf.bak.$(date +%s)"
+    SQUID_BLOCK_FILE="$(mktemp)"
+    SQUID_NEW_CONF="$(mktemp)"
+    CLEANUP_FILES+=("$SQUID_BLOCK_FILE" "$SQUID_NEW_CONF")
+    printf '%s\n' "$SQUID_AUTH_RULES" > "$SQUID_BLOCK_FILE"
+    # Insert the rules immediately before the deny-all line.
+    # Compose the new file from parts rather than sed -i so no
+    # in-place weirdness with newlines.
+    {
+      sed -n "1,$((DENY_LINE - 1))p" /etc/squid/squid.conf
+      cat "$SQUID_BLOCK_FILE"
+      sed -n "${DENY_LINE},\$p" /etc/squid/squid.conf
+    } > "$SQUID_NEW_CONF"
+    sudo install -m 0644 -o root -g root "$SQUID_NEW_CONF" /etc/squid/squid.conf
+    echo "    Updated /etc/squid/squid.conf (backup kept)."
   else
     echo "    Config already contains auth rules, skipping."
   fi
 
+  # Parse-validate the config before restarting the daemon.
+  if ! sudo squid -k parse; then
+    echo "    Invalid Squid configuration; NOT restarting squid. Check /etc/squid/squid.conf." >&2
+    exit 1
+  fi
   sudo systemctl restart squid
 
-  # If UFW was enabled earlier, port 3128 must be opened for the
-  # proxy to be reachable from anywhere but localhost.
+  # If UFW is active, open 3128. Squid requires a username/password
+  # (except the explicitly allowed IP above), so the firewall isn't
+  # the gate -- auth is -- and the port can stay open to anywhere.
   if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
     echo "    UFW is active; opening port 3128."
     sudo ufw allow 3128/tcp
@@ -370,7 +606,19 @@ EOF
 fi
 
 echo ""
+echo "### Final environment check ###"
+for command in zsh nvim fd bat fnm node npm corepack yadm; do
+  if command -v "$command" >/dev/null 2>&1; then
+    echo "    OK  $command"
+  else
+    echo "    MISSING $command" >&2
+  fi
+done
+
+echo ""
 echo "### Step 3 done. Log out and back in to start using zsh. ###"
 if [ -f /var/run/reboot-required ]; then
-  echo "A reboot is required (kernel was updated): sudo reboot"
+  echo "A reboot is recommended (kernel or core libraries were updated):"
+  echo "  sudo reboot"
+  echo "After rebooting, confirm you can still SSH in before relying on the server."
 fi
