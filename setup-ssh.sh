@@ -18,10 +18,6 @@ set -euo pipefail
 # Default username used if you just press Enter at the prompt.
 DEFAULT_USER="zacong"
 
-# Default passphrase for the new user's GitHub SSH key. Pressing
-# Enter at the prompt accepts it; type anything else to override.
-DEFAULT_SSH_PASS="Ddld1019."
-
 # Must run as root: we're editing another user's ~/.ssh.
 if [ "$(id -u)" -ne 0 ]; then
   echo "Must be run as root: sudo bash setup-ssh.sh" >&2
@@ -31,6 +27,13 @@ fi
 # The user must already exist (created by setup-root.sh).
 read -rp "Username of the new user [${DEFAULT_USER}]: " NEW_USER || true
 NEW_USER="${NEW_USER:-$DEFAULT_USER}"
+
+# Same validation as setup-root.sh: reject anything that would break
+# useradd or the later paths.
+if [[ ! "$NEW_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+  echo "Invalid username: $NEW_USER (lowercase letters, digits, - and _ only)" >&2
+  exit 1
+fi
 
 if ! id "$NEW_USER" &>/dev/null; then
   echo "User $NEW_USER does not exist. Run setup-root.sh first." >&2
@@ -55,7 +58,7 @@ read -rp "    Paste your host machine's public key: " HOST_PUB_KEY || true
 
 if [ -n "$HOST_PUB_KEY" ]; then
   case "$HOST_PUB_KEY" in
-    ssh-ed25519*|ssh-rsa*|ecdsa-sha2-*|ssh-dss*|sk-ssh-ed25519*|sk-ecdsa-sha2-*)
+    ssh-ed25519*|ssh-rsa*|ecdsa-sha2-*|sk-ssh-ed25519*|sk-ecdsa-sha2-*)
       if ! grep -qxF "$HOST_PUB_KEY" "$USER_HOME/.ssh/authorized_keys" 2>/dev/null; then
         touch "$USER_HOME/.ssh/authorized_keys"
         echo "$HOST_PUB_KEY" >> "$USER_HOME/.ssh/authorized_keys"
@@ -82,18 +85,35 @@ fi
 # ------------------------------------------------------------
 # The public half goes on GitHub so the setup-user.sh yadm
 # clone works; the private half stays on this server. The key is
-# protected with a passphrase by default (prompted below) --
-# setup-user.sh loads it into an ssh-agent so the yadm clone
-# still runs unattended.
+# protected with a passphrase you choose below -- setup-user.sh
+# loads it into an ssh-agent so the yadm clone still runs
+# unattended.
 echo "### Generating SSH keypair for $NEW_USER ###"
 if [ ! -f "$USER_HOME/.ssh/id_ed25519" ]; then
-  # Prompt (silently) for the passphrase. Passed via -N so the
-  # generation is non-interactive under sudo.
-  read -rsp "    Passphrase for the new SSH key [$DEFAULT_SSH_PASS]: " SSH_KEY_PASS || true
-  SSH_KEY_PASS="${SSH_KEY_PASS:-$DEFAULT_SSH_PASS}"
+  # Prompt (silently) for the passphrase. It's written to a
+  # throwaway helper script that ssh-keygen runs to read it back,
+  # so the passphrase never appears in argv (where any local user
+  # could see it via ps) nor in a file that survives the script.
+  # We generate as root and chown afterwards -- sudo would strip
+  # the SSH_ASKPASS variables from the environment.
+  read -rsp "    Passphrase for the new SSH key (required): " SSH_KEY_PASS || true
   echo
-  sudo -u "$NEW_USER" ssh-keygen -t ed25519 -N "$SSH_KEY_PASS" \
-    -C "$NEW_USER@$(hostname)" -f "$USER_HOME/.ssh/id_ed25519"
+  if [ -z "$SSH_KEY_PASS" ]; then
+    echo "    Passphrase cannot be empty." >&2
+    exit 1
+  fi
+  SSH_ASKPASS_HELPER="$(mktemp)"
+  # Passphrase is base64-encoded so it survives any character
+  # (spaces, quotes, newlines) without shell-quoting issues.
+  printf '#!/bin/sh\nprintf "%%s" %s | base64 -d\n' "$(printf '%s' "$SSH_KEY_PASS" | base64 | tr -d '\n')" > "$SSH_ASKPASS_HELPER"
+  chmod +x "$SSH_ASKPASS_HELPER"
+  # Remove the plaintext helper even if ssh-keygen fails midway.
+  trap 'rm -f "$SSH_ASKPASS_HELPER"' EXIT
+  SSH_ASKPASS="$SSH_ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force \
+    ssh-keygen -t ed25519 -C "$NEW_USER@$(hostname)" -f "$USER_HOME/.ssh/id_ed25519"
+  chown "$NEW_USER:$NEW_USER" "$USER_HOME/.ssh/id_ed25519" "$USER_HOME/.ssh/id_ed25519.pub"
+  rm -f "$SSH_ASKPASS_HELPER"
+  trap - EXIT
 else
   echo "    Key already exists, keeping it."
 fi

@@ -20,10 +20,6 @@ set -euo pipefail
 # added to GitHub by setup-ssh.sh.
 DOTFILES_REPO="git@github.com:zzacong/dotfiles.git"
 
-# Default passphrase for the GitHub SSH key -- must match what
-# setup-ssh.sh used, or was chosen when the key was generated.
-DEFAULT_SSH_PASS="Ddld1019."
-
 # This whole script must run as the new user, not root,
 # otherwise everything gets installed into /root instead.
 if [ "$(id -u)" -eq 0 ]; then
@@ -120,9 +116,13 @@ command -v bat >/dev/null 2>&1 || ln -sf "$(command -v batcat)" "$HOME/.local/bi
 # --skip-shell stops the installer from appending its own
 # `eval "$(fnm env)"` block to ~/.bashrc, which we don't manage.
 echo "### Installing fnm and latest LTS Node ###"
-curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell
-mkdir -p "$HOME/.local/bin"
-ln -sf "$HOME/.local/share/fnm/fnm" "$HOME/.local/bin/fnm"
+if [ ! -x "$HOME/.local/bin/fnm" ]; then
+  curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$HOME/.local/share/fnm/fnm" "$HOME/.local/bin/fnm"
+else
+  echo "    fnm already installed, skipping download."
+fi
 "$HOME/.local/bin/fnm" install --lts
 
 # ------------------------------------------------------------
@@ -136,6 +136,12 @@ chsh -s "$(command -v zsh)"
 # ------------------------------------------------------------
 # 6. Dotfiles
 # ------------------------------------------------------------
+# Clean up on any exit path: remove the throwaway askpass helper
+# (which holds the plaintext passphrase) and kill the script-local
+# ssh-agent (ssh-agent -s daemonizes and would otherwise keep the
+# decrypted private key in memory after this script ends).
+trap 'rm -f "${SSH_ASKPASS_HELPER:-}"; [ -n "${SSH_AGENT_PID:-}" ] && kill "$SSH_AGENT_PID" 2>/dev/null || true' EXIT
+
 # setup-ssh.sh already generated ~/.ssh/id_ed25519 and its
 # public half is on GitHub, so the clone below works. Guard in
 # case this script was run without setup-ssh.sh.
@@ -145,29 +151,42 @@ if [ ! -f "$HOME/.ssh/id_ed25519" ]; then
   # Owner-only rwx on the dir so ssh doesn't warn "unprotected
   # private key file" and no other user can list its contents.
   chmod 700 "$HOME/.ssh"
-  read -rsp "    Passphrase for the new SSH key [$DEFAULT_SSH_PASS]: " SSH_KEY_PASS || true
-  SSH_KEY_PASS="${SSH_KEY_PASS:-$DEFAULT_SSH_PASS}"
+  read -rsp "    Passphrase for the new SSH key (required): " SSH_KEY_PASS || true
   echo
-  ssh-keygen -t ed25519 -N "$SSH_KEY_PASS" -C "$(whoami)@$(hostname)" -f "$HOME/.ssh/id_ed25519"
+  if [ -z "$SSH_KEY_PASS" ]; then
+    echo "    Passphrase cannot be empty." >&2
+    exit 1
+  fi
+  # Passphrase is base64-encoded so it survives any character
+  # (spaces, quotes, newlines) without shell-quoting issues.
+  SSH_ASKPASS_HELPER="$(mktemp)"
+  printf '#!/bin/sh\nprintf "%%s" %s | base64 -d\n' "$(printf '%s' "$SSH_KEY_PASS" | base64 | tr -d '\n')" > "$SSH_ASKPASS_HELPER"
+  chmod +x "$SSH_ASKPASS_HELPER"
+  SSH_ASKPASS="$SSH_ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force \
+    ssh-keygen -t ed25519 -C "$(whoami)@$(hostname)" -f "$HOME/.ssh/id_ed25519"
+  rm -f "$SSH_ASKPASS_HELPER"
   echo "    Add this public key to GitHub:"
   cat "$HOME/.ssh/id_ed25519.pub"
   read -rp "    Press Enter once it's added to GitHub: " _IGNORED || true
 fi
 
-# The key has a passphrase by default, so load it into an
-# ssh-agent (spawned just for this script) before the yadm
-# clone below, otherwise the first SSH connection to github.com
-# would prompt for the passphrase and hang. The agent only lives
-# as long as this script does.
+# The key has a passphrase, so load it into an ssh-agent (spawned
+# just for this script, killed on exit by the trap above) before
+# the yadm clone below, otherwise the first SSH connection to
+# github.com would prompt for the passphrase and hang.
 echo "### Loading SSH key into ssh-agent ###"
 eval "$(ssh-agent -s)"
 if [ -z "${SSH_KEY_PASS:-}" ]; then
-  read -rsp "    SSH key passphrase [$DEFAULT_SSH_PASS]: " SSH_KEY_PASS || true
-  SSH_KEY_PASS="${SSH_KEY_PASS:-$DEFAULT_SSH_PASS}"
+  read -rsp "    SSH key passphrase (required): " SSH_KEY_PASS || true
   echo
+  if [ -z "$SSH_KEY_PASS" ]; then
+    echo "    Passphrase cannot be empty." >&2
+    exit 1
+  fi
 fi
 SSH_ASKPASS_HELPER="$(mktemp)"
-printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$SSH_KEY_PASS" > "$SSH_ASKPASS_HELPER"
+# Base64-encoded so the passphrase survives any character.
+printf '#!/bin/sh\nprintf "%%s" %s | base64 -d\n' "$(printf '%s' "$SSH_KEY_PASS" | base64 | tr -d '\n')" > "$SSH_ASKPASS_HELPER"
 # Make the helper executable so ssh-add can run it as a program
 # (SSH_ASKPASS expects a path to an executable).
 chmod +x "$SSH_ASKPASS_HELPER"
@@ -218,23 +237,37 @@ fi
 # (included by Ubuntu's default sshd_config). By now your host
 # machine's key is already in authorized_keys (setup-ssh.sh)
 # and the yadm clone just proved the GitHub key works, so
-# disabling password auth can't lock you out.
+# disabling password auth can't lock you out. We still refuse to
+# harden (and prompt for confirmation) unless a key login is
+# actually on the table -- a hard stop against locking yourself out.
 echo "### Hardening sshd (no root login, key-only auth) ###"
-sudo tee /etc/ssh/sshd_config.d/50-hardening.conf >/dev/null <<'EOF'
+if [ ! -s "$HOME/.ssh/authorized_keys" ]; then
+  echo "    No authorized_keys found for $USER; skipping hardening (you'd lock yourself out)." >&2
+elif grep -q "PasswordAuthentication no" /etc/ssh/sshd_config.d/50-hardening.conf 2>/dev/null; then
+  echo "    Already hardened, skipping."
+else
+  read -rp "    Have you logged in successfully via SSH key from your host? (y/N): " CONFIRM_HARDEN || true
+  if [[ "${CONFIRM_HARDEN,,}" =~ ^y(es)?$ ]]; then
+    sudo tee /etc/ssh/sshd_config.d/50-hardening.conf >/dev/null <<EOF
 PermitRootLogin no
 PasswordAuthentication no
 PubkeyAuthentication yes
+AllowUsers $USER
 MaxAuthTries 3
 LoginGraceTime 20
 EOF
 
-# sshd is socket-activated on Ubuntu 22.10+: ssh.socket owns
-# port 22 and ssh.service is only spawned on demand. Reload the
-# daemon first so the new drop-in config is picked up, then
-# restart the socket (and the service if it happens to be up).
-sudo systemctl daemon-reload
-sudo systemctl restart ssh.socket
-sudo systemctl restart ssh.service 2>/dev/null || true
+    # sshd is socket-activated on Ubuntu 22.10+: ssh.socket owns
+    # port 22 and ssh.service is only spawned on demand. Reload the
+    # daemon first so the new drop-in config is picked up, then
+    # restart the socket (and the service if it happens to be up).
+    sudo systemctl daemon-reload
+    sudo systemctl restart ssh.socket
+    sudo systemctl restart ssh.service 2>/dev/null || true
+  else
+    echo "    Skipping sshd hardening. Re-run once key login is confirmed."
+  fi
+fi
 
 # ------------------------------------------------------------
 # 8. (Optional) UFW firewall
@@ -243,15 +276,27 @@ sudo systemctl restart ssh.service 2>/dev/null || true
 # outgoing, then explicitly open the ports you need. ssh is
 # always allowed first so you can't lock yourself out.
 read -rp "Set up the UFW firewall? (y/N): " SETUP_UFW || true
-if [[ "${SETUP_UFW,,}" == "y" ]]; then
+if [[ "${SETUP_UFW,,}" =~ ^y(es)?$ ]]; then
   echo "### Setting up UFW firewall ###"
   sudo apt-get install -y ufw
   sudo ufw default deny incoming
   sudo ufw default allow outgoing
-  sudo ufw allow ssh
+
+  # Scope SSH to the IP you're connecting from by default (that's
+  # where your current session comes from, so you can't lock
+  # yourself out). Leave it open to anywhere only if no source IP
+  # can be detected or you deliberately enter "anywhere".
+  UFW_SSH_FROM="${SSH_CLIENT%% *}"
+  read -rp "    Allow SSH from this source IP [${UFW_SSH_FROM:-anywhere}]: " UFW_SSH_FROM_IN || true
+  UFW_SSH_FROM="${UFW_SSH_FROM_IN:-$UFW_SSH_FROM}"
+  if [ -n "$UFW_SSH_FROM" ]; then
+    sudo ufw allow from "$UFW_SSH_FROM" to any port 22 proto tcp
+  else
+    sudo ufw allow ssh
+  fi
 
   read -rp "    Also allow HTTP/HTTPS (ports 80, 443)? (y/N): " ALLOW_WEB || true
-  if [[ "${ALLOW_WEB,,}" == "y" ]]; then
+  if [[ "${ALLOW_WEB,,}" =~ ^y(es)?$ ]]; then
     sudo ufw allow 80/tcp
     sudo ufw allow 443/tcp
   fi
@@ -271,7 +316,7 @@ fi
 # checked by squid's basic_ncsa_auth helper). Rules are inserted
 # before the default `http_access deny all` so they take effect.
 read -rp "Also install the Squid proxy server? (y/N): " INSTALL_SQUID || true
-if [[ "${INSTALL_SQUID,,}" == "y" ]]; then
+if [[ "${INSTALL_SQUID,,}" =~ ^y(es)?$ ]]; then
   echo "### Installing Squid proxy ###"
   sudo apt-get install -y squid apache2-utils
   sudo systemctl enable --now squid
@@ -284,15 +329,18 @@ if [[ "${INSTALL_SQUID,,}" == "y" ]]; then
 
   read -rp "    Proxy username [johnfire]: " SQUID_USER || true
   SQUID_USER="${SQUID_USER:-johnfire}"
-  read -rsp "    Proxy password [johnfire]: " SQUID_PASS || true
-  SQUID_PASS="${SQUID_PASS:-johnfire}"
+  read -rsp "    Proxy password (required): " SQUID_PASS || true
   echo
+  if [ -z "$SQUID_PASS" ]; then
+    echo "    Proxy password cannot be empty." >&2
+    exit 1
+  fi
 
   # htpasswd-format password file consumed by basic_ncsa_auth.
   # The password is fed on stdin (twice, as htpasswd asks for it
   # twice) so it never shows up on the command line.
   if [ -f /etc/squid/passwords ]; then
-    echo "    Password file already exists, keeping it."
+    echo "    Password file already exists, keeping it (re-run doesn't change it; edit /etc/squid/passwords to update)."
   else
     printf '%s\n%s\n' "$SQUID_PASS" "$SQUID_PASS" \
       | sudo htpasswd -c /etc/squid/passwords "$SQUID_USER"
