@@ -247,35 +247,21 @@ fi
 eval "$("$HOME/.local/bin/fnm" env)"
 node --version
 
-# pnpm: the standalone installer (the preferred method on Linux)
-# is used rather than corepack, which newer Node LTS no longer
-# ships. It installs to $PNPM_HOME/bin (a cmd-shim that resolves
-# its real binary relative to that dir, so it must NOT be
-# symlinked elsewhere) and appends a PATH block to the shell rc
-# it detects; we keep our own PATH story instead -- the dotfiles'
-# .zshrc exports PNPM_HOME and puts $PNPM_HOME/bin on PATH -- so
-# just export it into this script's shell for the checks below.
-# Install is opt-in: pnpm's binary is ~30MB and a disk-tight VPS
-# may not have room, so ask first (skipped entirely when already
-# installed, so re-runs stay hands-free).
+# pnpm: installed via `npm i -g` (npm comes from fnm's node,
+# so pnpm lands in node's global prefix on PATH). The standalone
+# installer (get.pnpm.io) is not used, and corepack is not used
+# either -- newer Node LTS no longer ships it.
 echo "### Installing pnpm ###"
-export PNPM_HOME="$HOME/.local/share/pnpm"
-export PATH="$PNPM_HOME/bin:$PATH"
-if [ -x "$PNPM_HOME/bin/pnpm" ]; then
-  echo "    pnpm already installed, skipping download."
+if command -v pnpm >/dev/null 2>&1; then
+  echo "    pnpm already installed, skipping."
   pnpm --version
 else
-  read -rp "    Install pnpm? (y/N): " INSTALL_PNPM || true
-  if [[ "${INSTALL_PNPM,,}" =~ ^y(es)?$ ]]; then
-    curl -fsSL https://get.pnpm.io/install.sh | sh -
-    if [ ! -x "$PNPM_HOME/bin/pnpm" ]; then
-      echo "    pnpm install failed; binary missing at $PNPM_HOME/bin/pnpm." >&2
-      exit 1
-    fi
-    pnpm --version
-  else
-    echo "    Skipping pnpm install."
+  npm i -g pnpm
+  if ! command -v pnpm >/dev/null 2>&1; then
+    echo "    pnpm install failed; binary not on PATH." >&2
+    exit 1
   fi
+  pnpm --version
 fi
 
 # ------------------------------------------------------------
