@@ -138,35 +138,21 @@ if [ -n "$MISSING" ]; then
 fi
 
 # ------------------------------------------------------------
-# 2. Shell environment: oh-my-zsh + plugins + starship
+# 2. Shell environment: antidote + starship
 # ------------------------------------------------------------
-# --unattended skips the interactive prompts and does NOT
-# change the default shell (we do that explicitly in step 5).
-echo "### Installing oh-my-zsh ###"
-ZSH_DIR="${ZDOTDIR:-$HOME}/.oh-my-zsh"
-if [ ! -d "$ZSH_DIR" ]; then
-  sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+# Antidote is a plain zsh plugin manager, not an installer -- it
+# does not write any rc files or change the default shell (we do
+# that explicitly in step 5). It is cloned into ~/.antidote; the
+# dotfiles' .zshrc sources it and runs `antidote load` against
+# ~/.zsh_plugins.txt, which clones the plugins on first login.
+# The clone is skipped if it already exists so the script stays
+# re-runnable.
+ANTIDOTE_DIR="${ZDOTDIR:-$HOME}/.antidote"
+echo "### Installing antidote ###"
+if [ ! -d "$ANTIDOTE_DIR" ]; then
+  git clone --depth=1 https://github.com/mattmc3/antidote.git "$ANTIDOTE_DIR"
 else
   echo "    Already installed, skipping."
-fi
-
-# The plugins are cloned into oh-my-zsh's custom directory.
-# --depth=1 keeps the clone shallow and fast. Each clone is
-# skipped if it already exists so the script is re-runnable.
-ZSH_CUSTOM_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
-
-echo "### Installing zsh-autosuggestions plugin ###"
-if [ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions" ]; then
-  git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions"
-else
-  echo "    Already cloned, skipping."
-fi
-
-echo "### Installing zsh-syntax-highlighting plugin ###"
-if [ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-syntax-highlighting" ]; then
-  git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting.git "$ZSH_CUSTOM_DIR/plugins/zsh-syntax-highlighting"
-else
-  echo "    Already cloned, skipping."
 fi
 
 echo "### Installing starship prompt ###"
@@ -358,11 +344,11 @@ if [ -d "$YADM_REPO_DIR" ]; then
     echo "    Pulled latest."
   fi
 else
-  # Only a fresh bootstrap needs this: oh-my-zsh and the skel
-  # defaults wrote shell files that would collide with (and block)
-  # the clone. Move them aside so yadm's versions win without
-  # destroying anything -- nothing is deleted, the originals stay
-  # in $BACKUP_DIR. On a re-run this block is skipped because the
+  # Only a fresh bootstrap needs this: the skel defaults wrote
+  # shell files that would collide with (and block) the clone.
+  # Move them aside so yadm's versions win without destroying
+  # anything -- nothing is deleted, the originals stay in
+  # $BACKUP_DIR. On a re-run this block is skipped because the
   # shell files are already yadm-managed (moving them would dirty
   # the repo and leave you without a .zshrc).
   echo "### Moving existing shell files out of the way (backed up) ###"
@@ -676,6 +662,13 @@ for command in zsh nvim fd bat fnm node npm pnpm yadm starship; do
     echo "    MISSING $command" >&2
   fi
 done
+# antidote is a zsh function, not a binary, so check for the file
+# the dotfiles' .zshrc sources instead.
+if [ -f "$HOME/.antidote/antidote.zsh" ]; then
+  echo "    OK  antidote"
+else
+  echo "    MISSING antidote" >&2
+fi
 
 echo ""
 echo "### Step 3 done. Log out and back in to start using zsh. ###"
