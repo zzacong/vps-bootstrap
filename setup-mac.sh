@@ -5,8 +5,8 @@
 #   zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/main/setup-mac.sh)"
 #
 # Installs Xcode Command Line Tools + Homebrew, the shell env
-# (zsh + antidote + starship), a set of brew formulas, Node via
-# fnm, and then yadm-clones the dotfiles.
+# (zsh + oh-my-zsh + plugins + starship), a set of brew formulas,
+# Node via fnm, and then yadm-clones the dotfiles.
 # Unlike the VPS flow this is one script: a Mac is your own
 # machine, logged in as yourself, so there's no separate user /
 # key / user-install split.
@@ -138,17 +138,55 @@ fi
 eval "$("$HOMEBREW_PREFIX/bin/brew" shellenv)"
 
 # ------------------------------------------------------------
-# 3. Shell environment: antidote + starship
+# 3. Shell environment: oh-my-zsh + plugins + starship
 # ------------------------------------------------------------
-# Antidote is a plain zsh plugin manager, not an installer -- it
-# does not write any rc files or change the default shell (zsh is
-# already the default on macOS, checked in step 8). It comes from
-# Homebrew; the dotfiles' .zshrc sources it and runs `antidote
-# load` against ~/.zsh_plugins.txt, which clones the plugins on
-# first login. zsh-autosuggestions and zsh-syntax-highlighting
-# used to be cloned here but are now declared in that file, so
-# there is nothing extra to install.
-echo "### antidote comes from Homebrew (step 4) ###"
+# --unattended skips the interactive prompts and does NOT change
+# the default shell (zsh is already the default on macOS, checked
+# in step 8). The installer hard-exits 1 if ~/.oh-my-zsh already
+# exists, so guard it like the plugin clones below to stay
+# re-runnable. ZDOTDIR mirrors how the installer resolves $ZSH.
+echo "### Installing oh-my-zsh ###"
+ZSH_DIR="${ZDOTDIR:-$HOME}/.oh-my-zsh"
+if [ ! -d "$ZSH_DIR" ]; then
+  sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+else
+  echo "    Already installed, skipping."
+fi
+
+# The plugins that don't ship with oh-my-zsh are cloned into its
+# custom directory; oh-my-zsh loads any plugin there that the
+# .zshrc lists by name. --depth=1 keeps each clone shallow and
+# fast. Each clone is skipped if it already exists so the script
+# is re-runnable.
+ZSH_CUSTOM_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
+
+echo "### Installing zsh-completions plugin ###"
+if [ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-completions" ]; then
+  git clone --depth=1 https://github.com/zsh-users/zsh-completions "$ZSH_CUSTOM_DIR/plugins/zsh-completions"
+else
+  echo "    Already cloned, skipping."
+fi
+
+echo "### Installing zsh-autosuggestions plugin ###"
+if [ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions" ]; then
+  git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions"
+else
+  echo "    Already cloned, skipping."
+fi
+
+echo "### Installing zsh-you-should-use plugin ###"
+if [ ! -d "$ZSH_CUSTOM_DIR/plugins/you-should-use" ]; then
+  git clone --depth=1 https://github.com/MichaelAquilina/zsh-you-should-use "$ZSH_CUSTOM_DIR/plugins/you-should-use"
+else
+  echo "    Already cloned, skipping."
+fi
+
+echo "### Installing fast-syntax-highlighting plugin ###"
+if [ ! -d "$ZSH_CUSTOM_DIR/plugins/fast-syntax-highlighting" ]; then
+  git clone --depth=1 https://github.com/zdharma-continuum/fast-syntax-highlighting "$ZSH_CUSTOM_DIR/plugins/fast-syntax-highlighting"
+else
+  echo "    Already cloned, skipping."
+fi
 
 # ------------------------------------------------------------
 # 4. Brew formulas
@@ -158,7 +196,6 @@ echo "### antidote comes from Homebrew (step 4) ###"
 # uses day-to-day. macOS ships the real `fd`/`bat` names, so no
 # symlink dance like Ubuntu's fdfind/batcat.
 FORMULAS=(
-  antidote
   neovim
   bat
   ripgrep
@@ -182,6 +219,7 @@ FORMULAS=(
   pnpm
   fnm
   starship
+  zoxide
 )
 echo "### Installing brew formulas: ${FORMULAS[*]} ###"
 brew install "${FORMULAS[@]}"
@@ -191,7 +229,7 @@ brew install "${FORMULAS[@]}"
 # the `delta` binary.
 echo "### Verifying installed commands ###"
 MISSING=""
-for command in nvim bat rg fd lf yadm gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx pnpm fnm starship; do
+for command in nvim bat rg fd lf yadm gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx pnpm fnm starship zoxide; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "    Missing command: $command" >&2
     MISSING="$MISSING $command"
@@ -409,7 +447,7 @@ if [ -d "$YADM_REPO_DIR" ]; then
     echo "    Pulled latest."
   fi
 else
-  # Only a fresh bootstrap needs this: the OS and Homebrew wrote
+  # Only a fresh bootstrap needs this: oh-my-zsh and Homebrew wrote
   # shell files (.zshrc, .zprofile) that would collide with (and
   # block) the clone. Move them aside so yadm's versions win without
   # destroying anything -- nothing is deleted, the originals stay in
@@ -469,12 +507,18 @@ for command in zsh nvim fd bat rg lf yadm gh fnm node npm pnpm starship; do
     echo "    MISSING $command" >&2
   fi
 done
-# antidote is a zsh function, not a binary, so check for the file
-# the dotfiles' .zshrc sources instead.
-if [ -f "$HOMEBREW_PREFIX/share/antidote/antidote.zsh" ]; then
-  echo "    OK  antidote"
+# oh-my-zsh is sourced from ~/.zshrc as a script, not a binary,
+# so check for its directory.
+if [ -d "$HOME/.oh-my-zsh" ]; then
+  echo "    OK  oh-my-zsh"
 else
-  echo "    MISSING antidote" >&2
+  echo "    MISSING oh-my-zsh" >&2
+fi
+# zoxide is a brew formula, so it should be on PATH already.
+if command -v zoxide >/dev/null 2>&1; then
+  echo "    OK  zoxide"
+else
+  echo "    MISSING zoxide" >&2
 fi
 # pipx apps live in ~/.local/bin, which is added to PATH only by
 # the dotfiles' .zshrc in an interactive shell.

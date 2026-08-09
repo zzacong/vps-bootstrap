@@ -1,6 +1,6 @@
 # Machine Bootstrap
 
-Two provisioning flows, both converging on the same shell (zsh + antidote + starship), editor (neovim + vim-plug), Node (fnm), and yadm-managed dotfiles:
+Two provisioning flows, both converging on the same shell (zsh + oh-my-zsh + starship), editor (neovim + vim-plug), Node (fnm), and yadm-managed dotfiles:
 
 - **[VPS flow](#vps-flow)** — a fresh Ubuntu VPS (24.04+), three scripts in order.
 - **[Mac flow](#mac-flow)** — a new MacBook, one script.
@@ -24,7 +24,7 @@ Each step fetches the script with `bash -c "$(curl -fsSL <url>)"`. That form kee
 
 - A sudo-capable **new user** (default `zacong`) as your only login on the box
 - Key-only SSH: **host key** (your laptop's) for logging in, **GitHub deploy key** (generated on the server) for the dotfiles clone
-- **zsh + antidote** (plugins loaded from `~/.zsh_plugins.txt`) with the starship prompt
+- **zsh + oh-my-zsh** with autosuggestions, syntax highlighting, and the starship prompt
 - **neovim** with vim-plug (plugins come from your dotfiles), **fd**, **bat**, **ripgrep**, **lf**, **yadm**
 - **Node** (latest LTS) via **fnm**, with **pnpm** (brew on Mac, `npm i -g` on Linux)
 - Optionally: UFW firewall and a Squid proxy
@@ -77,7 +77,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/ma
 **What it does**, roughly in order:
 
 1. **System packages** — `zsh neovim fd-find bat ripgrep lf yadm git curl lsof unzip python3` via sudo (you'll be asked for your password on the first sudo). Optionally a full `apt upgrade` first.
-2. **Shell env** — antidote (git-cloned into `~/.antidote`), starship prompt (installed via its official script). Plugins are cloned by `antidote load` on first login, from the `~/.zsh_plugins.txt` that yadm brings in step 6.
+2. **Shell env** — oh-my-zsh (unattended), the custom plugins it doesn't bundle (zsh-completions, zsh-autosuggestions, you-should-use, fast-syntax-highlighting), zoxide, starship prompt (installed via its official script).
 3. **Neovim** — vim-plug, plus symlinks `fdfind`→`fd` and `batcat`→`bat` (Ubuntu renames both even on 24.04).
 4. **Node via fnm** — latest LTS, made the default.
 5. **zsh as the default shell** — via `chsh`.
@@ -102,13 +102,13 @@ The Mac flow is **zsh, not bash** — a fresh Mac's `/bin/zsh` is always a recen
 
 1. **Xcode Command Line Tools** — installs via a one-click GUI dialog (`xcode-select --install`) and waits for it to finish; Homebrew needs the compiler toolchain.
 2. **Homebrew** — non-interactive install (Apple Silicon or Intel, whichever the Mac is).
-3. **Shell env** — antidote (via Homebrew), starship prompt. Plugins are cloned by `antidote load` on first login, from the `~/.zsh_plugins.txt` that yadm brings in step 9. zsh is already the default on macOS, so no `chsh` needed.
-4. **Brew formulas** — `neovim bat ripgrep fd lf yadm` (the VPS core) plus `gh lazygit git-delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx pnpm fnm starship`. macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
+3. **Shell env** — oh-my-zsh (unattended), the custom plugins it doesn't bundle (zsh-completions, zsh-autosuggestions, you-should-use, fast-syntax-highlighting), starship prompt. zsh is already the default on macOS, so no `chsh` needed.
+4. **Brew formulas** — `neovim bat ripgrep fd lf yadm` (the VPS core) plus `gh lazygit git-delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx pnpm fnm starship zoxide`. macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
 5. **Neovim** — vim-plug, plus the undodir `init.vim` expects.
 6. **Node via fnm** — installed via Homebrew, latest LTS made the default.
 7. **Host key** — generates an ed25519 key *on the Mac*, prints the public half, and pauses while you add it to GitHub. Unlike the VPS there is **no deploy key**: the Mac's own key authenticates to GitHub.
 8. **Keychain** — the key's passphrase is stored in the macOS Keychain (`ssh-add --apple-use-keychain`) so it survives reboots (ADR-0002).
-9. **Dotfiles (yadm bootstrap)** — backs up the shell files the OS/Homebrew wrote, pre-seeds GitHub's pinned host key, `yadm clone`s your dotfiles, then runs vim-plug against your `init.vim`.
+9. **Dotfiles (yadm bootstrap)** — backs up the shell files oh-my-zsh/Homebrew wrote, pre-seeds GitHub's pinned host key, `yadm clone`s your dotfiles, then runs vim-plug against your `init.vim`.
 
 **Manual step — add the key to GitHub** (Settings → SSH and GPG keys) when the script pauses. Without it the dotfiles clone can't authenticate.
 

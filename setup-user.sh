@@ -138,19 +138,59 @@ if [ -n "$MISSING" ]; then
 fi
 
 # ------------------------------------------------------------
-# 2. Shell environment: antidote + starship
+# 2. Shell environment: oh-my-zsh + plugins + zoxide + starship
 # ------------------------------------------------------------
-# Antidote is a plain zsh plugin manager, not an installer -- it
-# does not write any rc files or change the default shell (we do
-# that explicitly in step 5). It is cloned into ~/.antidote; the
-# dotfiles' .zshrc sources it and runs `antidote load` against
-# ~/.zsh_plugins.txt, which clones the plugins on first login.
-# The clone is skipped if it already exists so the script stays
-# re-runnable.
-ANTIDOTE_DIR="${ZDOTDIR:-$HOME}/.antidote"
-echo "### Installing antidote ###"
-if [ ! -d "$ANTIDOTE_DIR" ]; then
-  git clone --depth=1 https://github.com/mattmc3/antidote.git "$ANTIDOTE_DIR"
+# --unattended skips the interactive prompts and does NOT
+# change the default shell (we do that explicitly in step 5).
+echo "### Installing oh-my-zsh ###"
+ZSH_DIR="${ZDOTDIR:-$HOME}/.oh-my-zsh"
+if [ ! -d "$ZSH_DIR" ]; then
+  sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+else
+  echo "    Already installed, skipping."
+fi
+
+# The plugins that don't ship with oh-my-zsh are cloned into its
+# custom directory; oh-my-zsh loads any plugin there that the
+# .zshrc lists by name. --depth=1 keeps each clone shallow and
+# fast. Each clone is skipped if it already exists so the script
+# is re-runnable.
+ZSH_CUSTOM_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
+
+echo "### Installing zsh-completions plugin ###"
+if [ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-completions" ]; then
+  git clone --depth=1 https://github.com/zsh-users/zsh-completions "$ZSH_CUSTOM_DIR/plugins/zsh-completions"
+else
+  echo "    Already cloned, skipping."
+fi
+
+echo "### Installing zsh-autosuggestions plugin ###"
+if [ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions" ]; then
+  git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions"
+else
+  echo "    Already cloned, skipping."
+fi
+
+echo "### Installing zsh-you-should-use plugin ###"
+if [ ! -d "$ZSH_CUSTOM_DIR/plugins/you-should-use" ]; then
+  git clone --depth=1 https://github.com/MichaelAquilina/zsh-you-should-use "$ZSH_CUSTOM_DIR/plugins/you-should-use"
+else
+  echo "    Already cloned, skipping."
+fi
+
+echo "### Installing fast-syntax-highlighting plugin ###"
+if [ ! -d "$ZSH_CUSTOM_DIR/plugins/fast-syntax-highlighting" ]; then
+  git clone --depth=1 https://github.com/zdharma-continuum/fast-syntax-highlighting "$ZSH_CUSTOM_DIR/plugins/fast-syntax-highlighting"
+else
+  echo "    Already cloned, skipping."
+fi
+
+echo "### Installing zoxide ###"
+# Zoxide is installed via its official script (the apt package
+# lags the releases). It lands in ~/.local/bin, which ~/.zshrc
+# already puts on PATH.
+if [ ! -x "$HOME/.local/bin/zoxide" ]; then
+  curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
 else
   echo "    Already installed, skipping."
 fi
@@ -344,10 +384,10 @@ if [ -d "$YADM_REPO_DIR" ]; then
     echo "    Pulled latest."
   fi
 else
-  # Only a fresh bootstrap needs this: the skel defaults wrote
-  # shell files that would collide with (and block) the clone.
-  # Move them aside so yadm's versions win without destroying
-  # anything -- nothing is deleted, the originals stay in
+  # Only a fresh bootstrap needs this: oh-my-zsh and the skel
+  # defaults wrote shell files that would collide with (and block)
+  # the clone. Move them aside so yadm's versions win without
+  # destroying anything -- nothing is deleted, the originals stay in
   # $BACKUP_DIR. On a re-run this block is skipped because the
   # shell files are already yadm-managed (moving them would dirty
   # the repo and leave you without a .zshrc).
@@ -662,12 +702,19 @@ for command in zsh nvim fd bat fnm node npm pnpm yadm starship; do
     echo "    MISSING $command" >&2
   fi
 done
-# antidote is a zsh function, not a binary, so check for the file
-# the dotfiles' .zshrc sources instead.
-if [ -f "$HOME/.antidote/antidote.zsh" ]; then
-  echo "    OK  antidote"
+# oh-my-zsh is sourced from ~/.zshrc as a script, not a binary,
+# so check for its directory.
+if [ -d "$HOME/.oh-my-zsh" ]; then
+  echo "    OK  oh-my-zsh"
 else
-  echo "    MISSING antidote" >&2
+  echo "    MISSING oh-my-zsh" >&2
+fi
+# zoxide lands in ~/.local/bin, which is on PATH only after the
+# dotfiles' .zshrc loads, so check for the file directly.
+if [ -x "$HOME/.local/bin/zoxide" ]; then
+  echo "    OK  zoxide"
+else
+  echo "    MISSING zoxide" >&2
 fi
 
 echo ""

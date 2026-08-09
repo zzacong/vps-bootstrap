@@ -1,6 +1,6 @@
 # Machine Bootstrap Context
 
-Provisioning a fresh machine into a usable dev box via two flows: the three-step VPS flow (`setup-root.sh`, `setup-ssh.sh`, `setup-user.sh`) for a fresh Ubuntu host, plus `setup-squid.sh`, a standalone extract of setup-user.sh's optional Squid section used to re-run or fix just the proxy config; and the single-script Mac flow (`setup-mac.sh`) for a new MacBook. Both converge on the same shell (zsh + antidote + starship), editor (neovim + vim-plug), Node (fnm), and yadm-managed dotfiles.
+Provisioning a fresh machine into a usable dev box via two flows: the three-step VPS flow (`setup-root.sh`, `setup-ssh.sh`, `setup-user.sh`) for a fresh Ubuntu host, plus `setup-squid.sh`, a standalone extract of setup-user.sh's optional Squid section used to re-run or fix just the proxy config; and the single-script Mac flow (`setup-mac.sh`) for a new MacBook. Both converge on the same shell (zsh + oh-my-zsh + starship), editor (neovim + vim-plug), Node (fnm), and yadm-managed dotfiles.
 
 ## Language
 
@@ -23,16 +23,16 @@ A throwaway executable that cats a 0600 temp file holding a passphrase, consumed
 _Avoid_: Helper script, askpass script
 
 **yadm bootstrap**:
-The first `yadm clone` of `git@github.com:zzacong/dotfiles.git` on the machine, preceded by a backed-up move-aside of the default shell files the OS writes, so the clone doesn't collide.
+The first `yadm clone` of `git@github.com:zzacong/dotfiles.git` on the machine, preceded by a backed-up move-aside of the default shell files the OS or oh-my-zsh write, so the clone doesn't collide.
 _Avoid_: Dotfiles setup, yadm init
 
-**Antidote**:
-The zsh plugin manager that replaces oh-my-zsh. It is a plain git repo (no installer, no rc files of its own): cloned to `~/.antidote` on the VPS, installed via Homebrew on a Mac. The dotfiles' `.zshrc` sources `antidote.zsh` and runs `antidote load`, which clones the plugins listed in the plugin manifest on first login.
-_Avoid_: Oh my zsh, plugin manager
+**Oh-my-zsh**:
+The zsh plugin framework installed by the bootstrap scripts (its official curl installer, `--unattended`). The dotfiles' `.zshrc` sources `oh-my-zsh.sh` and loads whatever the `plugins=(...)` array names; plugins oh-my-zsh doesn't bundle are cloned by the scripts into `~/.oh-my-zsh/custom/plugins` before the dotfiles land.
+_Avoid_: Plugin manager, shell framework
 
-**Plugin manifest**:
-`~/.zsh_plugins.txt`, the yadm-tracked file declaring the zsh plugins antidote loads (zsh-z, zsh-autosuggestions, zsh-syntax-highlighting). Sits in the dotfiles repo, not this one.
-_Avoid_: Plugin list, zsh_plugins file
+**Custom plugin**:
+A zsh plugin that doesn't ship with oh-my-zsh and must be cloned into `~/.oh-my-zsh/custom/plugins` by the bootstrap scripts: zsh-completions, zsh-autosuggestions, zsh-you-should-use, fast-syntax-highlighting. Sits on the machine, not in the dotfiles repo.
+_Avoid_: Third-party plugin, manual plugin
 
 ### VPS flow
 
@@ -49,7 +49,7 @@ _Avoid_: Server key, repo key
 _Avoid_: Hardening config, sshd config
 
 **Skel defaults**:
-The `/etc/skel` files (`~/.zshrc`, `~/.bashrc`, …) the shell writes on first login; backed up rather than deleted so a failed yadm clone leaves a usable shell.
+The `/etc/skel` files (`~/.zshrc`, `~/.bashrc`, …) oh-my-zsh and the shell write on first login; backed up rather than deleted so a failed yadm clone leaves a usable shell.
 _Avoid_: Default shell files, rc files
 
 ### Mac flow
