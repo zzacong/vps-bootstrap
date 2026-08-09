@@ -138,7 +138,7 @@ if [ -n "$MISSING" ]; then
 fi
 
 # ------------------------------------------------------------
-# 2. Shell environment: oh-my-zsh + plugins + theme
+# 2. Shell environment: oh-my-zsh + plugins + starship
 # ------------------------------------------------------------
 # --unattended skips the interactive prompts and does NOT
 # change the default shell (we do that explicitly in step 5).
@@ -169,18 +169,17 @@ else
   echo "    Already cloned, skipping."
 fi
 
-echo "### Installing spaceship prompt ###"
-if [ ! -d "$ZSH_CUSTOM_DIR/themes/spaceship-prompt" ]; then
-  git clone --depth=1 https://github.com/spaceship-prompt/spaceship-prompt.git "$ZSH_CUSTOM_DIR/themes/spaceship-prompt"
+echo "### Installing starship prompt ###"
+# Starship is installed via its official script (apt has no
+# starship). It lands in /usr/local/bin, escalating via sudo
+# since that dir is root-owned; -y skips the confirmation prompt.
+# The config (~/.config/starship.toml) is tracked in the yadm
+# dotfiles, so the binary is all this step needs to provide.
+if ! command -v starship >/dev/null 2>&1; then
+  curl -sS https://starship.rs/install.sh | sh -s -- -y
 else
-  echo "    Already cloned, skipping."
+  echo "    Already installed, skipping."
 fi
-
-# OMZ resolves `ZSH_THEME="spaceship"` against
-# themes/spaceship.zsh-theme; the spaceship repo ships one, so
-# link it into the themes dir.
-ln -sf "$ZSH_CUSTOM_DIR/themes/spaceship-prompt/spaceship.zsh-theme" \
-  "$ZSH_CUSTOM_DIR/themes/spaceship.zsh-theme"
 
 # ------------------------------------------------------------
 # 3. Neovim: vim-plug + renamed binary symlinks + undodir
@@ -670,7 +669,7 @@ fi
 
 echo ""
 echo "### Final environment check ###"
-for command in zsh nvim fd bat fnm node npm pnpm yadm; do
+for command in zsh nvim fd bat fnm node npm pnpm yadm starship; do
   if command -v "$command" >/dev/null 2>&1; then
     echo "    OK  $command"
   else

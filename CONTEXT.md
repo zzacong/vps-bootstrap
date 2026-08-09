@@ -1,6 +1,6 @@
 # Machine Bootstrap Context
 
-Provisioning a fresh machine into a usable dev box via two flows: the three-step VPS flow (`setup-root.sh`, `setup-ssh.sh`, `setup-user.sh`) for a fresh Ubuntu host, plus `setup-squid.sh`, a standalone extract of setup-user.sh's optional Squid section used to re-run or fix just the proxy config; and the single-script Mac flow (`setup-mac.sh`) for a new MacBook. Both converge on the same shell (zsh + oh-my-zsh + spaceship), editor (neovim + vim-plug), Node (fnm), and yadm-managed dotfiles.
+Provisioning a fresh machine into a usable dev box via two flows: the three-step VPS flow (`setup-root.sh`, `setup-ssh.sh`, `setup-user.sh`) for a fresh Ubuntu host, plus `setup-squid.sh`, a standalone extract of setup-user.sh's optional Squid section used to re-run or fix just the proxy config; and the single-script Mac flow (`setup-mac.sh`) for a new MacBook. Both converge on the same shell (zsh + oh-my-zsh + starship), editor (neovim + vim-plug), Node (fnm), and yadm-managed dotfiles.
 
 ## Language
 

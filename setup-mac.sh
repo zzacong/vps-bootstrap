@@ -5,7 +5,7 @@
 #   zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/main/setup-mac.sh)"
 #
 # Installs Xcode Command Line Tools + Homebrew, the shell env
-# (zsh + oh-my-zsh + plugins + spaceship), a set of brew
+# (zsh + oh-my-zsh + plugins + starship), a set of brew
 # formulas, Node via fnm, and then yadm-clones the dotfiles.
 # Unlike the VPS flow this is one script: a Mac is your own
 # machine, logged in as yourself, so there's no separate user /
@@ -138,7 +138,7 @@ fi
 eval "$("$HOMEBREW_PREFIX/bin/brew" shellenv)"
 
 # ------------------------------------------------------------
-# 3. Shell environment: oh-my-zsh + plugins + theme
+# 3. Shell environment: oh-my-zsh + plugins + starship
 # ------------------------------------------------------------
 # --unattended skips the interactive prompts and does NOT change
 # the default shell (zsh is already the default on macOS, checked
@@ -172,19 +172,6 @@ else
   echo "    Already cloned, skipping."
 fi
 
-echo "### Installing spaceship prompt ###"
-if [ ! -d "$ZSH_CUSTOM_DIR/themes/spaceship-prompt" ]; then
-  git clone --depth=1 https://github.com/spaceship-prompt/spaceship-prompt.git "$ZSH_CUSTOM_DIR/themes/spaceship-prompt"
-else
-  echo "    Already cloned, skipping."
-fi
-
-# OMZ resolves `ZSH_THEME="spaceship"` against
-# themes/spaceship.zsh-theme; the spaceship repo ships one, so
-# link it into the themes dir.
-ln -sf "$ZSH_CUSTOM_DIR/themes/spaceship-prompt/spaceship.zsh-theme" \
-  "$ZSH_CUSTOM_DIR/themes/spaceship.zsh-theme"
-
 # ------------------------------------------------------------
 # 4. Brew formulas
 # ------------------------------------------------------------
@@ -215,6 +202,7 @@ FORMULAS=(
   pipx
   pnpm
   fnm
+  starship
 )
 echo "### Installing brew formulas: ${FORMULAS[*]} ###"
 brew install "${FORMULAS[@]}"
@@ -224,7 +212,7 @@ brew install "${FORMULAS[@]}"
 # the `delta` binary.
 echo "### Verifying installed commands ###"
 MISSING=""
-for command in nvim bat rg fd lf yadm gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx pnpm fnm; do
+for command in nvim bat rg fd lf yadm gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx pnpm fnm starship; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "    Missing command: $command" >&2
     MISSING="$MISSING $command"
@@ -495,7 +483,7 @@ fi
 
 echo ""
 echo "### Final environment check ###"
-for command in zsh nvim fd bat rg lf yadm gh fnm node npm pnpm; do
+for command in zsh nvim fd bat rg lf yadm gh fnm node npm pnpm starship; do
   if command -v "$command" >/dev/null 2>&1; then
     echo "    OK  $command"
   else
