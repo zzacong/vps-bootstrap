@@ -1,0 +1,5 @@
+# 0003-antidote-zsh-plugin-manager
+
+The bootstrap scripts install antidote instead of oh-my-zsh as the zsh plugin manager: git-cloned to `~/.antidote` on the VPS, a Homebrew formula on the Mac, with plugins declared in `~/.zsh_plugins.txt` (the plugin manifest) and cloned by `antidote load` on first login.
+
+oh-my-zsh was a framework: a curl installer that wrote its own `.zshrc`, owned a `custom/plugins` directory the bootstrap scripts had to clone into, and shipped a bundled theme/prompt machinery we never used. Antidote is a plain plugin manager with no installer and no rc files — it only clones plugins and sources them. The trade-off was moving plugin ownership out of this repo into the dotfiles' manifest, which is where the plugin list already lived; the scripts now only have to provide the antidote binary (git clone or brew), and both flows converge on the identical mechanism. This is hard to reverse in the sense that existing boxes would need a migration, and surprising without context — nothing in the scripts names oh-my-zsh anymore, yet the plugin list lives in another repo.

@@ -5,8 +5,8 @@
 #   zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/main/setup-mac.sh)"
 #
 # Installs Xcode Command Line Tools + Homebrew, the shell env
-# (zsh + oh-my-zsh + plugins + starship), a set of brew
-# formulas, Node via fnm, and then yadm-clones the dotfiles.
+# (zsh + antidote + starship), a set of brew formulas, Node via
+# fnm, and then yadm-clones the dotfiles.
 # Unlike the VPS flow this is one script: a Mac is your own
 # machine, logged in as yourself, so there's no separate user /
 # key / user-install split.
@@ -138,39 +138,17 @@ fi
 eval "$("$HOMEBREW_PREFIX/bin/brew" shellenv)"
 
 # ------------------------------------------------------------
-# 3. Shell environment: oh-my-zsh + plugins + starship
+# 3. Shell environment: antidote + starship
 # ------------------------------------------------------------
-# --unattended skips the interactive prompts and does NOT change
-# the default shell (zsh is already the default on macOS, checked
-# in step 7). The installer hard-exits 1 if ~/.oh-my-zsh already
-# exists, so guard it like the plugin clones below to stay
-# re-runnable. ZDOTDIR mirrors how the installer resolves $ZSH.
-echo "### Installing oh-my-zsh ###"
-ZSH_DIR="${ZDOTDIR:-$HOME}/.oh-my-zsh"
-if [ ! -d "$ZSH_DIR" ]; then
-  sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-else
-  echo "    Already installed, skipping."
-fi
-
-# The plugins are cloned into oh-my-zsh's custom directory.
-# --depth=1 keeps the clone shallow and fast. Each clone is
-# skipped if it already exists so the script is re-runnable.
-ZSH_CUSTOM_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
-
-echo "### Installing zsh-autosuggestions plugin ###"
-if [ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions" ]; then
-  git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions"
-else
-  echo "    Already cloned, skipping."
-fi
-
-echo "### Installing zsh-syntax-highlighting plugin ###"
-if [ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-syntax-highlighting" ]; then
-  git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting.git "$ZSH_CUSTOM_DIR/plugins/zsh-syntax-highlighting"
-else
-  echo "    Already cloned, skipping."
-fi
+# Antidote is a plain zsh plugin manager, not an installer -- it
+# does not write any rc files or change the default shell (zsh is
+# already the default on macOS, checked in step 8). It comes from
+# Homebrew; the dotfiles' .zshrc sources it and runs `antidote
+# load` against ~/.zsh_plugins.txt, which clones the plugins on
+# first login. zsh-autosuggestions and zsh-syntax-highlighting
+# used to be cloned here but are now declared in that file, so
+# there is nothing extra to install.
+echo "### antidote comes from Homebrew (step 4) ###"
 
 # ------------------------------------------------------------
 # 4. Brew formulas
@@ -180,6 +158,7 @@ fi
 # uses day-to-day. macOS ships the real `fd`/`bat` names, so no
 # symlink dance like Ubuntu's fdfind/batcat.
 FORMULAS=(
+  antidote
   neovim
   bat
   ripgrep
@@ -430,7 +409,7 @@ if [ -d "$YADM_REPO_DIR" ]; then
     echo "    Pulled latest."
   fi
 else
-  # Only a fresh bootstrap needs this: oh-my-zsh and Homebrew wrote
+  # Only a fresh bootstrap needs this: the OS and Homebrew wrote
   # shell files (.zshrc, .zprofile) that would collide with (and
   # block) the clone. Move them aside so yadm's versions win without
   # destroying anything -- nothing is deleted, the originals stay in
@@ -490,6 +469,13 @@ for command in zsh nvim fd bat rg lf yadm gh fnm node npm pnpm starship; do
     echo "    MISSING $command" >&2
   fi
 done
+# antidote is a zsh function, not a binary, so check for the file
+# the dotfiles' .zshrc sources instead.
+if [ -f "$HOMEBREW_PREFIX/share/antidote/antidote.zsh" ]; then
+  echo "    OK  antidote"
+else
+  echo "    MISSING antidote" >&2
+fi
 # pipx apps live in ~/.local/bin, which is added to PATH only by
 # the dotfiles' .zshrc in an interactive shell.
 for app in virtualenv yt-dlp; do
