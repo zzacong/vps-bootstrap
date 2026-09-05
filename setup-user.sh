@@ -10,14 +10,17 @@
 # sshd hardening is the last mandatory step so your host
 # machine's SSH key is confirmed working before password auth
 # is disabled.
+# No private keys ever live on this box: GitHub access uses the
+# 1Password SSH agent forwarded from your host (connect with ssh -A).
 # ============================================================
 
 # Fail fast on any error, unset variable, or pipe failure.
 set -euo pipefail
 
 # The dotfiles repo is cloned with yadm near the end. It is an
-# SSH URL; the new user's key was generated and its public half
-# added to GitHub by setup-ssh.sh.
+# SSH URL; auth comes from the forwarded 1Password agent, whose
+# public half is already on GitHub -- no key is generated on
+# this server.
 DOTFILES_REPO="git@github.com:zzacong/dotfiles.git"
 
 # This whole script must run as the new user, not root,
@@ -46,12 +49,13 @@ require_command sudo
 require_command apt-get
 require_command curl
 require_command ssh
+require_command ssh-add
 require_command ssh-keygen
 
-# One EXIT trap drives everything: removes the temp files that
-# hold the SSH passphrase, kills the sudo keep-alive loop, and
-# stops the script-local ssh-agent so the decrypted private key
-# doesn't linger in memory after the script ends.
+# One EXIT trap drives everything: removes temp files and kills
+# the sudo keep-alive loop. No script-local ssh-agent is started:
+# GitHub auth uses the forwarded 1Password agent ($SSH_AUTH_SOCK),
+# which must be left alone -- never overwrite it with eval $(ssh-agent).
 CLEANUP_FILES=()
 SUDO_KEEPALIVE_PID=""
 cleanup() {
@@ -62,27 +66,8 @@ cleanup() {
   if [ -n "$SUDO_KEEPALIVE_PID" ]; then
     kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
   fi
-  if [ -n "${SSH_AGENT_PID:-}" ]; then
-    kill "$SSH_AGENT_PID" 2>/dev/null || true
-  fi
 }
 trap cleanup EXIT
-
-# Feed a passphrase to ssh-keygen/ssh-add via SSH_ASKPASS so it
-# never appears on a command line or gets interpolated into script
-# source: the secret lives in a 0600 temp file that a tiny helper
-# cats on demand. OpenSSH >= 8.4 honours SSH_ASKPASS_REQUIRE=force.
-setup_askpass() {
-  local helper passfile
-  helper="$(mktemp)"
-  passfile="$(mktemp)"
-  chmod 600 "$passfile"
-  printf '%s' "$1" > "$passfile"
-  printf '#!/bin/sh\ncat "%s"\n' "$passfile" > "$helper"
-  chmod 700 "$helper"
-  CLEANUP_FILES+=("$helper" "$passfile")
-  ASKPASS_HELPER="$helper"
-}
 
 # The long run below calls sudo many times; keep the credential
 # timestamp fresh so a later sudo can't suddenly prompt (or fail
@@ -300,52 +285,24 @@ chsh -s "$(command -v zsh)"
 # ------------------------------------------------------------
 # 6. Dotfiles
 # ------------------------------------------------------------
-# setup-ssh.sh already generated ~/.ssh/id_ed25519 and its
-# public half is on GitHub, so the clone below works. Guard in
-# case this script was run without setup-ssh.sh.
-if [ ! -f "$HOME/.ssh/id_ed25519" ]; then
-  echo "### No SSH key found; generating one ###"
-  mkdir -p "$HOME/.ssh"
-  # Owner-only rwx on the dir so ssh doesn't warn "unprotected
-  # private key file" and no other user can list its contents.
-  chmod 700 "$HOME/.ssh"
-  read -rsp "    Passphrase for the new SSH key (required): " SSH_KEY_PASS || true
-  echo
-  read -rsp "    Confirm passphrase: " SSH_KEY_PASS_CONFIRM || true
-  echo
-  if [ -z "$SSH_KEY_PASS" ]; then
-    echo "    Passphrase cannot be empty." >&2
-    exit 1
-  fi
-  if [[ "$SSH_KEY_PASS" != "$SSH_KEY_PASS_CONFIRM" ]]; then
-    echo "    Passphrases do not match." >&2
-    exit 1
-  fi
-  setup_askpass "$SSH_KEY_PASS"
-  SSH_ASKPASS="$ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force \
-    ssh-keygen -t ed25519 -C "$(whoami)@$(hostname)" -f "$HOME/.ssh/id_ed25519"
-  echo "    Add this public key to GitHub:"
-  cat "$HOME/.ssh/id_ed25519.pub"
-  read -rp "    Press Enter once it's added to GitHub: " _IGNORED || true
+# No keys are generated on this box. GitHub auth comes from the
+# 1Password SSH agent forwarded from your host -- you must have
+# connected with `ssh -A` (or ForwardAgent yes). Do NOT start a
+# local ssh-agent here: it would overwrite $SSH_AUTH_SOCK and
+# hide the forwarded agent.
+echo "### Checking forwarded 1Password agent ###"
+if [ -z "${SSH_AUTH_SOCK:-}" ]; then
+  echo "    No forwarded agent (SSH_AUTH_SOCK is unset)." >&2
+  echo "    Log out and reconnect with: ssh -A $USER@<host>" >&2
+  exit 1
 fi
-
-# The key has a passphrase, so load it into an ssh-agent
-# (spawned just for this script, killed on exit by the trap
-# above) before the yadm clone below, otherwise the first SSH
-# connection to github.com would prompt for the passphrase and
-# hang.
-echo "### Loading SSH key into ssh-agent ###"
-eval "$(ssh-agent -s)"
-if [ -z "${SSH_KEY_PASS:-}" ]; then
-  read -rsp "    SSH key passphrase (required): " SSH_KEY_PASS || true
-  echo
-  if [ -z "$SSH_KEY_PASS" ]; then
-    echo "    Passphrase cannot be empty." >&2
-    exit 1
-  fi
+if ! ssh-add -L >/dev/null 2>&1; then
+  echo "    Forwarded agent has no keys (ssh-add -L failed)." >&2
+  echo "    Check 1Password's SSH agent on your host, then reconnect with: ssh -A $USER@<host>" >&2
+  exit 1
 fi
-setup_askpass "$SSH_KEY_PASS"
-SSH_ASKPASS="$ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force ssh-add "$HOME/.ssh/id_ed25519"
+echo "    Forwarded keys visible:"
+ssh-add -l | sed 's/^/      /'
 
 # yadm clones over SSH; pre-seed known_hosts so the first
 # connection to github.com doesn't prompt for host confirmation
@@ -359,6 +316,34 @@ if ! ssh-keygen -F github.com >/dev/null 2>&1; then
   echo "$GITHUB_HOST_KEY" >> "$HOME/.ssh/known_hosts"
 fi
 chmod 600 "$HOME/.ssh/known_hosts" 2>/dev/null || true
+
+# Fail fast if GitHub rejects the forwarded key, before yadm
+# depends on it below. BatchMode keeps ssh from prompting.
+echo "### Testing GitHub auth via forwarded agent ###"
+GH_OUTPUT="$(ssh -o BatchMode=yes -T git@github.com 2>&1 || true)"
+# The repo URL already names its owner, so derive the expected
+# GitHub user from it: with several keys in the agent, ssh offers
+# each in turn and GitHub answers as the first one it accepts --
+# which may be a valid login on the wrong account, lacking access
+# to this repo. Showing who won turns that into a clear error
+# instead of a confusing yadm clone failure.
+REPO_OWNER="${DOTFILES_REPO#git@github.com:}"
+REPO_OWNER="${REPO_OWNER%%/*}"
+if printf '%s' "$GH_OUTPUT" | grep -qi "successfully authenticated"; then
+  printf '%s\n' "$GH_OUTPUT" | head -n1 | sed 's/^/      /'
+  if printf '%s' "$GH_OUTPUT" | grep -qi "Hi ${REPO_OWNER}!"; then
+    echo "    GitHub auth OK as ${REPO_OWNER} via forwarded agent."
+  else
+    echo "    Authenticated, but NOT as ${REPO_OWNER} (owner of $DOTFILES_REPO)." >&2
+    echo "    Move the key for ${REPO_OWNER} first in 1Password, or add a forwarded key to that account." >&2
+    exit 1
+  fi
+else
+  echo "    GitHub auth failed. Raw ssh output:" >&2
+  printf '      %s\n' "$GH_OUTPUT" >&2
+  echo "    Is this 1Password public key on the right GitHub account?" >&2
+  exit 1
+fi
 
 echo "### Cloning dotfiles with yadm ###"
 # yadm 3.x keeps its bare repo under XDG data (~/.local/share/yadm),
