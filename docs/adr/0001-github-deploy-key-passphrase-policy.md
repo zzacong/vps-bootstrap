@@ -1,5 +1,7 @@
 # 0001-github-deploy-key-passphrase-policy
 
+> Status: historical. Superseded by 0005 for the VPS flow — no deploy key is generated on the server anymore, so this policy now applies to nothing. Kept as the record of why the old flow required, confirmed, and askpass-delivered its passphrase.
+
 The GitHub deploy key passphrase is always required (no default), entered twice to catch typos, and delivered to `ssh-keygen`/`ssh-add` through an SSH_ASKPASS helper that cats a 0600 temp file — never as a `-N` CLI argument and never interpolated into script source.
 
 This was the least-safe aspect of the original scripts: a hardcoded default passphrase was shared between `setup-ssh.sh` and `setup-user.sh` and exposed in argv and prompts. The review agents each proposed a fix (require non-empty, confirm twice, or auto-generate a random one). We chose *required + confirmed twice* over auto-generating because the operator already must carry the passphrase from step 2 to step 3, so prompting twice adds no new burden while guaranteeing a known secret; and we chose SSH_ASKPASS over `-N`/string interpolation because those leak into `ps` output or require shell-escaping a secret that may contain quotes. The temp files are removed on every exit path via a trap.

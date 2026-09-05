@@ -305,8 +305,8 @@ fi
 # ------------------------------------------------------------
 # 9. Host key (generated on this Mac, added to GitHub)
 # ------------------------------------------------------------
-# Unlike the VPS there is no deploy key: the operator's own key
-# lives on the Mac and its public half is added to GitHub so the
+# Like the VPS flow, there is no separate deploy key: the operator's
+# own key lives on the Mac and its public half is added to GitHub so the
 # dotfiles clone works. Its passphrase is stored in the Keychain
 # (via --apple-use-keychain) so it survives reboots -- see
 # docs/adr/0002-mac-host-key-keychain-policy.md.
