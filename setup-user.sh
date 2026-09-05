@@ -30,6 +30,10 @@ if [ "$(id -u)" -eq 0 ]; then
   exit 1
 fi
 
+# $USER is unset in minimal environments (env -i, some su paths),
+# which would trip `set -u`. Resolve once, up front.
+CURRENT_USER="${USER:-$(whoami)}"
+
 # Keep apt fully non-interactive so conffile and needrestart
 # prompts can't hang an unattended run.
 export DEBIAN_FRONTEND=noninteractive
@@ -293,16 +297,19 @@ chsh -s "$(command -v zsh)"
 echo "### Checking forwarded 1Password agent ###"
 if [ -z "${SSH_AUTH_SOCK:-}" ]; then
   echo "    No forwarded agent (SSH_AUTH_SOCK is unset)." >&2
-  echo "    Log out and reconnect with: ssh -A $USER@<host>" >&2
+  echo "    Log out and reconnect with: ssh -A $CURRENT_USER@<host>" >&2
   exit 1
 fi
 if ! ssh-add -L >/dev/null 2>&1; then
   echo "    Forwarded agent has no keys (ssh-add -L failed)." >&2
-  echo "    Check 1Password's SSH agent on your host, then reconnect with: ssh -A $USER@<host>" >&2
+  echo "    Check 1Password's SSH agent on your host, then reconnect with: ssh -A $CURRENT_USER@<host>" >&2
   exit 1
 fi
 echo "    Forwarded keys visible:"
-ssh-add -l | sed 's/^/      /'
+# Guarded: the agent could vanish between the check above and
+# here, and pipefail + set -e would otherwise exit silently.
+# The GitHub probe below reports clearly if keys are gone.
+ssh-add -l 2>/dev/null | sed 's/^/      /' || true
 
 # yadm clones over SSH; pre-seed known_hosts so the first
 # connection to github.com doesn't prompt for host confirmation
@@ -457,7 +464,7 @@ PermitRootLogin no
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
-AllowUsers $USER
+AllowUsers $CURRENT_USER
 MaxAuthTries 3
 LoginGraceTime 20
 EOF
@@ -493,7 +500,7 @@ EOF
     echo "    sshd reloaded with hardened config."
   else
     echo "    Skipping sshd hardening. Re-run once key login is confirmed." >&2
-    echo "    Test it first: ssh -o PasswordAuthentication=no $USER@<host>" >&2
+    echo "    Test it first: ssh -o PasswordAuthentication=no $CURRENT_USER@<host>" >&2
   fi
 fi
 

@@ -95,9 +95,13 @@ if ! ssh-keygen -lf "$HOST_KEY_CHECK" >/dev/null 2>&1; then
 fi
 
 if ! grep -qxF "$HOST_PUB_KEY" "$USER_HOME/.ssh/authorized_keys" 2>/dev/null; then
-  # install creates the file already owned by the new user with
-  # 600, so there's no root-owned window before the chown.
-  install -m 600 -o "$NEW_USER" -g "$USER_GROUP" /dev/null "$USER_HOME/.ssh/authorized_keys"
+  if [ ! -f "$USER_HOME/.ssh/authorized_keys" ]; then
+    # install creates the file already owned by the new user with
+    # 600, so there's no root-owned window before the chown.
+    # Only when missing: re-running to add another key must not
+    # truncate keys already in the file.
+    install -m 600 -o "$NEW_USER" -g "$USER_GROUP" /dev/null "$USER_HOME/.ssh/authorized_keys"
+  fi
   echo "$HOST_PUB_KEY" >> "$USER_HOME/.ssh/authorized_keys"
   echo "    Installed. You'll be able to SSH in as $NEW_USER."
 else
