@@ -30,13 +30,19 @@ if [ "$(id -u)" -eq 0 ]; then
   exit 1
 fi
 
-# $USER is unset in minimal environments (env -i, some su paths),
-# which would trip `set -u`. Resolve once, up front.
-CURRENT_USER="${USER:-$(whoami)}"
+# Resolve the login name from the system, not $USER: $USER can be
+# unset (env -i) or stale (su / sudo -u without env reset), and this
+# value lands in sshd's AllowUsers -- a wrong name locks you out.
+CURRENT_USER="$(id -un)"
 
 # Keep apt fully non-interactive so conffile and needrestart
 # prompts can't hang an unattended run.
 export DEBIAN_FRONTEND=noninteractive
+
+# ~/.local/bin holds the fd/bat symlinks, zoxide, and fnm, but a
+# non-login bash may not have it on PATH yet. Export it now so
+# `command -v` checks (and the final environment check) see them.
+export PATH="$HOME/.local/bin:$PATH"
 
 # ------------------------------------------------------------
 # Cleanup + helper plumbing
@@ -55,6 +61,9 @@ require_command curl
 require_command ssh
 require_command ssh-add
 require_command ssh-keygen
+# python3 validates the optional Squid IP in the preflight section,
+# which runs before the apt install below -- so it must already exist.
+require_command python3
 
 # One EXIT trap drives everything: removes temp files and kills
 # the sudo keep-alive loop. No script-local ssh-agent is started:
@@ -132,6 +141,13 @@ if [[ "${INSTALL_SQUID,,}" =~ ^y(es)?$ ]]; then
   read -rp "    Proxy username: " SQUID_USER || true
   if [ -z "$SQUID_USER" ]; then
     echo "    A proxy username is required." >&2
+    exit 1
+  fi
+  # htpasswd usernames cannot contain colons, and spaces would
+  # break squid.conf parsing; keep to a safe portable set. This
+  # also keeps the username safe for the exact-match lookup below.
+  if [[ ! "$SQUID_USER" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "    Proxy username must use only letters, digits, dot, underscore, hyphen (no spaces or colons)." >&2
     exit 1
   fi
   read -rsp "    Proxy password: " SQUID_PASS || true
@@ -242,7 +258,7 @@ echo "### Installing zoxide ###"
 # lags the releases). It lands in ~/.local/bin, which ~/.zshrc
 # already puts on PATH.
 if [ ! -x "$HOME/.local/bin/zoxide" ]; then
-  curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
 else
   echo "    Already installed, skipping."
 fi
@@ -254,7 +270,7 @@ echo "### Installing starship prompt ###"
 # The config (~/.config/starship.toml) is tracked in the yadm
 # dotfiles, so the binary is all this step needs to provide.
 if ! command -v starship >/dev/null 2>&1; then
-  curl -sS https://starship.rs/install.sh | sh -s -- -y
+  curl -fsSL https://starship.rs/install.sh | sh -s -- -y
 else
   echo "    Already installed, skipping."
 fi
@@ -347,7 +363,11 @@ fi
 # Prompts for your password. command -v is safer/portable
 # than `which`.
 echo "### Changing default shell to zsh ###"
-chsh -s "$(command -v zsh)"
+if [ "$SHELL" != "$(command -v zsh)" ]; then
+  chsh -s "$(command -v zsh)"
+else
+  echo "    Default shell already zsh, skipping."
+fi
 
 # ------------------------------------------------------------
 # 6. Dotfiles
@@ -429,7 +449,7 @@ if [ -d "$YADM_REPO_DIR" ]; then
   # Verify the remote is the repo we expect, and refuse to pull
   # over uncommitted local changes (yadm pull would fail or merge
   # in unpredictable ways).
-  if ! yadm remote -v 2>/dev/null | grep -q "git@github.com:zzacong/dotfiles.git"; then
+  if ! yadm remote -v 2>/dev/null | grep -qF "$DOTFILES_REPO"; then
     echo "    Warning: yadm remote is not $DOTFILES_REPO; check with 'yadm remote -v'." >&2
   fi
   if [ -n "$(yadm status --porcelain 2>/dev/null)" ]; then
@@ -510,7 +530,7 @@ if [ ! -s "$HOME/.ssh/authorized_keys" ]; then
 fi
 
 HARDENING_FILE=/etc/ssh/sshd_config.d/50-hardening.conf
-if grep -q "PasswordAuthentication no" "$HARDENING_FILE" 2>/dev/null; then
+if grep -q "^PasswordAuthentication no" "$HARDENING_FILE" 2>/dev/null; then
   echo "    Already hardened, skipping."
 else
   read -rp "    Have you confirmed key login works in a SECOND terminal? (y/N): " CONFIRM_KEY_LOGIN || true
@@ -616,8 +636,15 @@ if [[ "${INSTALL_SQUID,,}" =~ ^y(es)?$ ]]; then
   # The password is fed on stdin (twice, as htpasswd asks for it
   # twice) so it never shows up on the command line.
   if [ -f /etc/squid/passwords ]; then
-    if sudo grep -q "^${SQUID_USER}:" /etc/squid/passwords; then
-      echo "    Password file exists and user $SQUID_USER is present; keeping it."
+    # Exact field match via awk: the username is validated to
+    # [A-Za-z0-9._-] above, but grep -F could still false-match a
+    # shorter name against a longer one ("bb:" inside "abb:...").
+    if sudo awk -F: -v user="$SQUID_USER" '$1 == user { found=1; exit } END { exit !found }' /etc/squid/passwords; then
+      echo "    Password file exists and user $SQUID_USER is present; updating its password."
+      printf '%s\n%s\n' "$SQUID_PASS" "$SQUID_PASS" \
+        | sudo htpasswd /etc/squid/passwords "$SQUID_USER"
+      sudo chown root:proxy /etc/squid/passwords
+      sudo chmod 640 /etc/squid/passwords
     else
       echo "    Password file exists but has no $SQUID_USER; adding the user."
       printf '%s\n%s\n' "$SQUID_PASS" "$SQUID_PASS" \
