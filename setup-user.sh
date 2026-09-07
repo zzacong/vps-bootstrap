@@ -86,6 +86,70 @@ sudo -v
 SUDO_KEEPALIVE_PID=$!
 
 # ------------------------------------------------------------
+# 0. Preflight: ask everything up front
+# ------------------------------------------------------------
+# All plan questions live here so the rest of the script runs
+# without stopping. The sshd hardening confirmation stays in
+# section 7: it is a live safety check, not a plan choice.
+echo "### Configuration (asked up front, then runs unattended) ###"
+RUN_UPGRADE=""
+SETUP_UFW=""
+ALLOW_WEB="n"
+INSTALL_SQUID=""
+SQUID_IP=""
+SQUID_USER=""
+SQUID_PASS=""
+
+read -rp "Run a full 'sudo apt-get upgrade'? (y/N): " RUN_UPGRADE || true
+
+read -rp "Set up the UFW firewall? (y/N): " SETUP_UFW || true
+if [[ "${SETUP_UFW,,}" =~ ^y(es)?$ ]]; then
+  read -rp "    Also allow HTTP/HTTPS (ports 80, 443)? (y/N): " ALLOW_WEB || true
+fi
+
+read -rp "Also install the Squid proxy server? (y/N): " INSTALL_SQUID || true
+if [[ "${INSTALL_SQUID,,}" =~ ^y(es)?$ ]]; then
+  # The IP that may use the proxy without logging in. Defaults to
+  # the address you're SSH-ing in from (auto-detected). SSH_CLIENT
+  # is only set inside an SSH session, so guard against it being
+  # unset (it would fail under `set -u`).
+  SSH_CLIENT_IP="${SSH_CLIENT:-}"
+  SSH_CLIENT_IP="${SSH_CLIENT_IP%% *}"
+  read -rp "    IP allowed without login [${SSH_CLIENT_IP:-none}]: " SQUID_IP || true
+  SQUID_IP="${SQUID_IP:-$SSH_CLIENT_IP}"
+
+  # Validate the IP with Python's ipaddress parser before it lands
+  # in squid.conf. A single host is expected (no CIDR here).
+  if [ -n "$SQUID_IP" ]; then
+    if ! python3 -c 'import ipaddress, sys; ipaddress.ip_address(sys.argv[1])' "$SQUID_IP" 2>/dev/null; then
+      echo "    Invalid IP address: $SQUID_IP" >&2
+      exit 1
+    fi
+  fi
+
+  # No hardcoded credentials: require a username and a non-empty
+  # password, entered twice to catch typos.
+  read -rp "    Proxy username: " SQUID_USER || true
+  if [ -z "$SQUID_USER" ]; then
+    echo "    A proxy username is required." >&2
+    exit 1
+  fi
+  read -rsp "    Proxy password: " SQUID_PASS || true
+  echo
+  read -rsp "    Confirm proxy password: " SQUID_PASS_CONFIRM || true
+  echo
+  if [ -z "$SQUID_PASS" ] || [[ "$SQUID_PASS" != "$SQUID_PASS_CONFIRM" ]]; then
+    echo "    Proxy password empty or does not match." >&2
+    exit 1
+  fi
+  unset SQUID_PASS_CONFIRM
+fi
+
+echo "    upgrade: ${RUN_UPGRADE:-n}"
+echo "    ufw: ${SETUP_UFW:-n} / web: ${ALLOW_WEB:-n}"
+echo "    squid: ${INSTALL_SQUID:-n}"
+
+# ------------------------------------------------------------
 # 1. System packages (via sudo)
 # ------------------------------------------------------------
 # The new user has sudo rights, so the apt work now lives here
@@ -101,8 +165,7 @@ echo "### Updating apt packages ###"
 sudo apt-get update
 
 # A full upgrade is optional: it can pull in a kernel update and
-# force a reboot, and it's slow. Ask instead of doing it blindly.
-read -rp "Run a full 'sudo apt-get upgrade'? (y/N): " RUN_UPGRADE || true
+# force a reboot, and it's slow. Answered up front in section 0.
 if [[ "${RUN_UPGRADE,,}" =~ ^y(es)?$ ]]; then
   sudo apt-get upgrade -y
 fi
@@ -513,8 +576,8 @@ fi
 # left open to anywhere -- the hardening step disables password
 # auth and restricts sshd to this user, so the firewall isn't
 # the security boundary for port 22 (and an IP-scoped rule could
-# lock you out when your source IP changes).
-read -rp "Set up the UFW firewall? (y/N): " SETUP_UFW || true
+# lock you out when your source IP changes). Answered up front in
+# section 0.
 if [[ "${SETUP_UFW,,}" =~ ^y(es)?$ ]]; then
   echo "### Setting up UFW firewall ###"
   sudo apt-get install -y ufw
@@ -522,7 +585,6 @@ if [[ "${SETUP_UFW,,}" =~ ^y(es)?$ ]]; then
   sudo ufw default allow outgoing
   sudo ufw allow ssh
 
-  read -rp "    Also allow HTTP/HTTPS (ports 80, 443)? (y/N): " ALLOW_WEB || true
   if [[ "${ALLOW_WEB,,}" =~ ^y(es)?$ ]]; then
     sudo ufw allow 80/tcp
     sudo ufw allow 443/tcp
@@ -542,45 +604,13 @@ fi
 # name, and/or with a username/password (an htpasswd-style file
 # checked by squid's basic_ncsa_auth helper). Rules are inserted
 # before the default `http_access deny all` so they take effect.
-read -rp "Also install the Squid proxy server? (y/N): " INSTALL_SQUID || true
+# Install choice and credentials were collected up front in
+# section 0, including IP validation and the password match
+# check, so this section runs without stopping.
 if [[ "${INSTALL_SQUID,,}" =~ ^y(es)?$ ]]; then
   echo "### Installing Squid proxy ###"
   sudo apt-get install -y squid apache2-utils
   sudo systemctl enable --now squid
-
-  # The IP that may use the proxy without logging in. Defaults to
-  # the address you're SSH-ing in from (auto-detected). SSH_CLIENT
-  # is only set inside an SSH session, so guard against it being
-  # unset (it would fail under `set -u`).
-  SSH_CLIENT_IP="${SSH_CLIENT:-}"
-  SSH_CLIENT_IP="${SSH_CLIENT_IP%% *}"
-  read -rp "    IP allowed without login [${SSH_CLIENT_IP:-none}]: " SQUID_IP || true
-  SQUID_IP="${SQUID_IP:-$SSH_CLIENT_IP}"
-
-  # Validate the IP with Python's ipaddress parser before it lands
-  # in squid.conf. A single host is expected (no CIDR here).
-  if [ -n "$SQUID_IP" ]; then
-    if ! python3 -c 'import ipaddress, sys; ipaddress.ip_address(sys.argv[1])' "$SQUID_IP" 2>/dev/null; then
-      echo "    Invalid IP address: $SQUID_IP" >&2
-      exit 1
-    fi
-  fi
-
-  # No hardcoded credentials: require a username and a non-empty
-  # password, entered twice to catch typos.
-  read -rp "    Proxy username: " SQUID_USER || true
-  if [ -z "$SQUID_USER" ]; then
-    echo "    A proxy username is required." >&2
-    exit 1
-  fi
-  read -rsp "    Proxy password: " SQUID_PASS || true
-  echo
-  read -rsp "    Confirm proxy password: " SQUID_PASS_CONFIRM || true
-  echo
-  if [ -z "$SQUID_PASS" ] || [[ "$SQUID_PASS" != "$SQUID_PASS_CONFIRM" ]]; then
-    echo "    Proxy password empty or does not match." >&2
-    exit 1
-  fi
 
   # htpasswd-format password file consumed by basic_ncsa_auth.
   # The password is fed on stdin (twice, as htpasswd asks for it
@@ -683,6 +713,7 @@ EOF
   echo "    Port: 3128"
   echo "    Allowed IP: ${SQUID_IP:-none (password auth only)}"
   echo "    Proxy user: $SQUID_USER"
+  unset SQUID_PASS
 fi
 
 echo ""
