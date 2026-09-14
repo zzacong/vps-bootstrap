@@ -104,11 +104,10 @@ The Mac flow is **zsh, not bash** — a fresh Mac's `/bin/zsh` is always a recen
 4. **Brew formulas** — `neovim bat ripgrep fd lf yadm` (the VPS core) plus `gh lazygit git-delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx pnpm fnm starship zoxide`. macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
 5. **Neovim** — vim-plug, plus the undodir `init.vim` expects.
 6. **Node via fnm** — installed via Homebrew, latest LTS made the default.
-7. **Host key** — generates an ed25519 key *on the Mac*, prints the public half, and pauses while you add it to GitHub. Same shape as the VPS flow: the machine's own key authenticates to GitHub, with no separate deploy key on either flow.
-8. **Keychain** — the key's passphrase is stored in the macOS Keychain (`ssh-add --apple-use-keychain`) so it survives reboots (ADR-0002).
-9. **Dotfiles (yadm bootstrap)** — backs up the shell files oh-my-zsh/Homebrew wrote, pre-seeds GitHub's pinned host key, `yadm clone`s your dotfiles, then runs vim-plug against your `init.vim`.
+7. **1Password SSH agent** — links `~/.1password/agent.sock` to the agent socket in 1Password's group container and writes `~/.ssh/config` with `IdentityAgent ~/.1password/agent.sock`. No key is generated on the Mac.
+8. **Dotfiles (yadm bootstrap)** — backs up the shell files oh-my-zsh/Homebrew wrote, pre-seeds GitHub's pinned host key, `yadm clone`s your dotfiles, then runs vim-plug against your `init.vim`.
 
-**Manual step — add the key to GitHub** (Settings → SSH and GPG keys) when the script pauses. Without it the dotfiles clone can't authenticate.
+**Before you run it**, install and sign in to 1Password with **Settings → Developer → SSH agent** turned on, holding a key whose public half is already on the GitHub account that owns the dotfiles. The script can't do any of that itself, so it fails fast with that checklist when the agent is missing or GitHub refuses it (ADR-0006).
 
 ## Coming back after three months
 
@@ -125,6 +124,6 @@ The Mac flow is **zsh, not bash** — a fresh Mac's `/bin/zsh` is always a recen
 | `setup-ssh.sh` | Step 2 (VPS) — host key install (as root) |
 | `setup-user.sh` | Step 3 (VPS) — packages, shell, dotfiles, hardening, optional firewall/proxy (as new user) |
 | `setup-squid.sh` | Standalone extract of setup-user.sh's optional Squid section, for re-running/fixing just the proxy config |
-| `setup-mac.sh` | Mac — CLT, Homebrew, shell, formulas, fnm/Node, host key, dotfiles (as the user) |
-| `CONTEXT.md` | Shared vocabulary for the scripts (host key, forwarded agent, askpass helper, …) |
-| `docs/adr/` | Design decision records (e.g. 1Password agent forwarding, Mac Keychain policy) |
+| `setup-mac.sh` | Mac — CLT, Homebrew, shell, formulas, fnm/Node, 1Password agent, dotfiles (as the user) |
+| `CONTEXT.md` | Shared vocabulary for the scripts (host key, forwarded agent, …) |
+| `docs/adr/` | Design decision records (e.g. 1Password agent forwarding, the Mac agent policy) |

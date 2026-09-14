@@ -11,15 +11,15 @@ The provisioning flow that turns a fresh machine into a usable dev box: create a
 _Avoid_: Setup, provisioning (too generic for the scripts)
 
 **Host key**:
-The SSH keypair on the operator's own machine: a 1Password-managed key on the laptop, or a key generated *on the Mac* for a fresh MacBook. On a VPS, one line of the host's `ssh-add -L` output is pasted into the new user's `authorized_keys` so password SSH can later be disabled. On a fresh Mac, the key is generated *on the Mac*, its public half is added to GitHub so the yadm dotfiles clone works, and its passphrase is stored in the Keychain.
+The 1Password-managed SSH keypair on the operator's own machine. On a VPS, one line of the host's `ssh-add -L` output is pasted into the new user's `authorized_keys` so password SSH can later be disabled. On a Mac, the same key authenticates the `yadm` dotfiles clone through 1Password's local agent (ADR-0006). Neither flow generates a key.
 _Avoid_: Client key, Mac key, laptop key
 
 **Passphrase**:
-The secret protecting an SSH private key. Only the Mac flow handles one: required (no default), confirmed twice, delivered to ssh-keygen/ssh-add via an SSH_ASKPASS helper so it never appears in argv or script source, then stored in the Keychain (ADR-0002). The VPS flow handles no passphrases at all — GitHub access uses the forwarded agent (ADR-0005).
+The secret protecting an SSH private key. No bootstrap script handles one: the VPS flow authenticates through the forwarded agent (ADR-0005) and the Mac flow through the local 1Password agent (ADR-0006). Both keys are 1Password-managed, so 1Password prompts for the passphrase when it needs it.
 _Avoid_: Password, secret phrase
 
 **Askpass helper**:
-A throwaway executable that cats a 0600 temp file holding a passphrase, consumed by OpenSSH via `SSH_ASKPASS`. Only `setup-mac.sh` still uses one; the VPS scripts were freed of all passphrase handling by ADR-0005.
+A throwaway executable that cats a 0600 temp file holding a passphrase, consumed by OpenSSH via `SSH_ASKPASS`. No script uses one anymore: ADR-0005 removed it from the VPS flow and ADR-0006 from the Mac flow. The term survives in those ADRs as the record of how generated keys were handled.
 _Avoid_: Helper script, askpass script
 
 **yadm bootstrap**:
@@ -57,3 +57,7 @@ _Avoid_: Default shell files, rc files
 **Command Line Tools**:
 Apple's Xcode Command Line Tools, the compiler toolchain Homebrew requires; installed via a one-click GUI dialog (`xcode-select --install`) before Homebrew.
 _Avoid_: Xcode, CLT
+
+**Agent socket link**:
+`~/.1password/agent.sock`, a symlink `setup-mac.sh` creates to the SSH agent socket inside 1Password's macOS group container (`~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock`), so `~/.ssh/config` can name the short, stable path. Needed because macOS sets `SSH_AUTH_SOCK` to its own agent rather than 1Password's (ADR-0006).
+_Avoid_: Agent socket, ssh config entry

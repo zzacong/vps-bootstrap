@@ -22,8 +22,8 @@
 set -euo pipefail
 
 # The dotfiles repo is cloned with yadm near the end. It is an
-# SSH URL; the host key generated below is added to GitHub first
-# so the clone works.
+# SSH URL, authenticated by the 1Password SSH agent set up in
+# step 9; no key is generated on this Mac.
 DOTFILES_REPO="git@github.com:zzacong/dotfiles.git"
 
 # This script is macOS-only.
@@ -50,38 +50,17 @@ require_command() {
 }
 require_command curl
 
-# One EXIT trap drives everything: removes the temp files that
-# hold the SSH passphrase and stops the script-local ssh-agent
-# so the decrypted private key doesn't linger in memory.
-# zsh's set -u is happy expanding an empty array, so no :- guard
-# (bash would need it).
+# One EXIT trap drives everything: removes the temp files the
+# script writes. zsh's set -u is happy expanding an empty array,
+# so no :- guard (bash would need it).
 CLEANUP_FILES=()
 cleanup() {
   local f
   for f in "${CLEANUP_FILES[@]}"; do
     rm -f "$f"
   done
-  if [ -n "${SSH_AGENT_PID:-}" ]; then
-    kill "$SSH_AGENT_PID" 2>/dev/null || true
-  fi
 }
 trap cleanup EXIT
-
-# Feed a passphrase to ssh-keygen/ssh-add via SSH_ASKPASS so it
-# never appears on a command line or gets interpolated into script
-# source: the secret lives in a 0600 temp file that a tiny helper
-# cats on demand. OpenSSH >= 8.4 honours SSH_ASKPASS_REQUIRE=force.
-setup_askpass() {
-  local helper passfile
-  helper="$(mktemp)"
-  passfile="$(mktemp)"
-  chmod 600 "$passfile"
-  printf '%s' "$1" > "$passfile"
-  printf '#!/bin/sh\ncat "%s"\n' "$passfile" > "$helper"
-  chmod 700 "$helper"
-  CLEANUP_FILES+=("$helper" "$passfile")
-  ASKPASS_HELPER="$helper"
-}
 
 # ------------------------------------------------------------
 # 1. Xcode Command Line Tools
@@ -303,93 +282,64 @@ else
 fi
 
 # ------------------------------------------------------------
-# 9. Host key (generated on this Mac, added to GitHub)
+# 9. 1Password SSH agent (the GitHub credential)
 # ------------------------------------------------------------
-# Like the VPS flow, there is no separate deploy key: the operator's
-# own key lives on the Mac and its public half is added to GitHub so the
-# dotfiles clone works. Its passphrase is stored in the Keychain
-# (via --apple-use-keychain) so it survives reboots -- see
-# docs/adr/0002-mac-host-key-keychain-policy.md.
-if [ ! -f "$HOME/.ssh/id_ed25519" ]; then
-  echo "### No SSH key found; generating one ###"
-  mkdir -p "$HOME/.ssh"
-  # Owner-only rwx on the dir so ssh doesn't warn "unprotected
-  # private key file" and no other user can list its contents.
-  chmod 700 "$HOME/.ssh"
-  read -rs "SSH_KEY_PASS?    Passphrase for the new SSH key (required): " || true
-  echo
-  read -rs "SSH_KEY_PASS_CONFIRM?    Confirm passphrase: " || true
-  echo
-  if [ -z "$SSH_KEY_PASS" ]; then
-    echo "    Passphrase cannot be empty." >&2
-    exit 1
-  fi
-  if [[ "$SSH_KEY_PASS" != "$SSH_KEY_PASS_CONFIRM" ]]; then
-    echo "    Passphrases do not match." >&2
-    exit 1
-  fi
-  setup_askpass "$SSH_KEY_PASS"
-  SSH_ASKPASS="$ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force \
-    ssh-keygen -t ed25519 -C "$(whoami)@$(hostname)" -f "$HOME/.ssh/id_ed25519"
-  echo "    Add this public key to GitHub:"
-  cat "$HOME/.ssh/id_ed25519.pub"
-  read "_IGNORED?    Press Enter once it's added to GitHub: " || true
-else
-  echo "    SSH key already exists; reusing it."
-  echo "    Fingerprint: $(ssh-keygen -lf "$HOME/.ssh/id_ed25519")"
+# Like the VPS flow, this Mac keeps no GitHub key of its own: the
+# operator's 1Password key signs the dotfiles clone (ADR-0006).
+# 1Password's agent listens on a socket inside the app's group
+# container; ~/.1password/agent.sock is a stable short path to
+# it, and ~/.ssh/config points IdentityAgent at that path. A
+# fresh Mac has neither, so create both before the clone.
+OP_AGENT_SOCK="$HOME/.1password/agent.sock"
+OP_AGENT_TARGET="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
+
+# The group container only exists once 1Password has run, and the
+# script does not install it: a licensed, signed-in app is not
+# something a bootstrap can conjure. Fail here with instructions
+# rather than at the clone with a bare publickey error.
+if [ ! -d "$(dirname "$OP_AGENT_TARGET")" ]; then
+  echo "1Password is not set up on this Mac." >&2
+  echo "    Install and sign in to 1Password, then enable" >&2
+  echo "    Settings -> Developer -> SSH agent, and re-run this script." >&2
+  exit 1
 fi
 
-# macOS only auto-loads keys from the Keychain into future
-# sessions when ~/.ssh/config carries UseKeychain/AddKeysToAgent.
-# The dotfiles don't track this file, so pre-seed it here (before
-# the first ssh-add, and before the yadm clone that could collide
-# with it -- there's nothing to collide with since yadm doesn't
-# manage it).
+mkdir -p "$HOME/.1password"
+if [ -L "$OP_AGENT_SOCK" ]; then
+  # Re-point a stale link. A real file there is left alone: better
+  # to warn than to clobber something put there on purpose.
+  if [ "$(readlink "$OP_AGENT_SOCK")" != "$OP_AGENT_TARGET" ]; then
+    echo "### Re-pointing $OP_AGENT_SOCK ###"
+    ln -sfn "$OP_AGENT_TARGET" "$OP_AGENT_SOCK"
+  fi
+elif [ -e "$OP_AGENT_SOCK" ]; then
+  echo "    $OP_AGENT_SOCK exists and is not a symlink; leaving it alone."
+else
+  echo "### Linking $OP_AGENT_SOCK to 1Password's agent socket ###"
+  ln -s "$OP_AGENT_TARGET" "$OP_AGENT_SOCK"
+fi
+
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
+# macOS points SSH_AUTH_SOCK at its own agent, not 1Password's, so
+# the config line is what routes ssh (and the git clone) to the
+# 1Password key. The dotfiles don't track this file and the clone
+# is what needs it, so pre-seed it; an existing file is only
+# warned about, since it may carry hosts and options worth keeping.
 if [ ! -f "$HOME/.ssh/config" ]; then
-  echo "### Writing ~/.ssh/config (Keychain integration) ###"
+  echo "### Writing ~/.ssh/config (1Password SSH agent) ###"
   cat > "$HOME/.ssh/config" <<'EOF'
 Host *
-  AddKeysToAgent yes
-  UseKeychain yes
-  IdentityFile ~/.ssh/id_ed25519
+  IdentityAgent ~/.1password/agent.sock
 EOF
   chmod 600 "$HOME/.ssh/config"
+elif ! grep -q "IdentityAgent" "$HOME/.ssh/config"; then
+  echo "    ~/.ssh/config exists but names no IdentityAgent; add:" >&2
+  echo "      Host *" >&2
+  echo "        IdentityAgent ~/.1password/agent.sock" >&2
 else
-  echo "    ~/.ssh/config already exists; leaving it alone."
+  echo "    ~/.ssh/config already names an IdentityAgent; leaving it alone."
 fi
-
-# The key has a passphrase, so load it into an ssh-agent
-# (spawned just for this script, killed on exit by the trap
-# above) and store the passphrase in the Keychain, before the
-# yadm clone below -- otherwise the first SSH connection to
-# github.com would prompt for the passphrase and hang. On a
-# re-run the key is already in the Keychain, so load it from
-# there first and skip the passphrase prompt entirely.
-echo "### Loading SSH key into ssh-agent + Keychain ###"
-eval "$(ssh-agent -s)"
-# macOS's --apple-load-keychain ignores its path argument and
-# loads whatever is in the Keychain, so judge success by whether
-# our key's fingerprint actually landed in the agent.
-SSH_KEY_FP="$(ssh-keygen -lf "$HOME/.ssh/id_ed25519" | awk '{print $2}')"
-if ssh-add --apple-load-keychain >/dev/null 2>&1 \
-  && ssh-add -l 2>/dev/null | grep -q "$SSH_KEY_FP"; then
-  echo "    Loaded from Keychain."
-else
-  if [ -z "${SSH_KEY_PASS:-}" ]; then
-    read -rs "SSH_KEY_PASS?    Passphrase for $HOME/.ssh/id_ed25519 (required): " || true
-    echo
-    if [ -z "$SSH_KEY_PASS" ]; then
-      echo "    Passphrase cannot be empty." >&2
-      exit 1
-    fi
-  fi
-  setup_askpass "$SSH_KEY_PASS"
-  SSH_ASKPASS="$ASKPASS_HELPER" SSH_ASKPASS_REQUIRE=force \
-    ssh-add --apple-use-keychain "$HOME/.ssh/id_ed25519"
-fi
-unset SSH_KEY_PASS SSH_KEY_PASS_CONFIRM
 
 # ------------------------------------------------------------
 # 10. Dotfiles
@@ -418,7 +368,10 @@ chmod 600 "$HOME/.ssh/known_hosts" 2>/dev/null || true
 echo "### Verifying GitHub SSH auth ###"
 GITHUB_AUTH_OUTPUT="$(ssh -o BatchMode=yes -T git@github.com 2>&1 || true)"
 if ! echo "$GITHUB_AUTH_OUTPUT" | grep -q "successfully authenticated"; then
-  echo "    GitHub SSH auth failed. Is the public key added to GitHub?" >&2
+  echo "    GitHub SSH auth failed via the 1Password agent." >&2
+  echo "    Check that 1Password is running and unlocked with its SSH agent on" >&2
+  echo "    (Settings -> Developer -> SSH agent), and that the key's public half" >&2
+  echo "    is on the GitHub account owning $DOTFILES_REPO." >&2
   exit 1
 fi
 echo "    GitHub SSH auth OK."

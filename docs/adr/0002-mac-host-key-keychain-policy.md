@@ -1,5 +1,7 @@
 # 0002-mac-host-key-keychain-policy
 
+> Status: historical. Superseded by 0006 for the Mac flow — no host key is generated and no passphrase is stored, so this policy now applies to nothing. Kept as the record of why the Mac flow required, confirmed, and Keychain-persisted its passphrase.
+
 The Mac host key's passphrase is always required (no default), entered twice, delivered to `ssh-keygen`/`ssh-add` via an SSH_ASKPASS helper, and then persisted in the macOS Keychain with `ssh-add --apple-use-keychain` so it survives reboots without re-prompting. This deliberately diverges from ADR-0001 (the GitHub deploy key's passphrase is *never* persisted).
 
 The divergence exists because the two keys protect different things. The GitHub deploy key lives on a server and is only ever loaded into a short-lived script-local agent during a single bootstrap; persisting its passphrase there would expand the attack surface of a box you rarely touch. The Mac host key is the operator's own key, used constantly for GitHub auth and server logins, and the Keychain is the OS-provided, encrypted place to store it — `--apple-use-keychain` stores the passphrase in a Keychain item and loads the key into the per-session ssh-agent automatically. The shared discipline remains: never empty, never in argv, never interpolated into script source — the askpass helper carries the secret either way.
