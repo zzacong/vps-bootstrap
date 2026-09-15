@@ -172,8 +172,10 @@ fi
 # ------------------------------------------------------------
 # The core set mirrors the VPS flow (editor, pager tools, lf,
 # yadm for dotfiles) plus the extra tools this machine actually
-# uses day-to-day. macOS ships the real `fd`/`bat` names, so no
-# symlink dance like Ubuntu's fdfind/batcat.
+# uses day-to-day. git is here to upgrade a tool macOS already
+# has: the CLT's build lags Homebrew's by several minor versions,
+# and brew's PATH wins from here on. macOS ships the real
+# `fd`/`bat` names, so no symlink dance like Ubuntu's fdfind/batcat.
 FORMULAS=(
   neovim
   bat
@@ -181,6 +183,7 @@ FORMULAS=(
   fd
   lf
   yadm
+  git
   gh
   lazygit
   git-delta
@@ -192,7 +195,6 @@ FORMULAS=(
   glow
   fastfetch
   ffmpeg
-  mkcert
   oha
   pipx
   pnpm
@@ -208,7 +210,7 @@ brew install "${FORMULAS[@]}"
 # the `delta` binary.
 echo "### Verifying installed commands ###"
 MISSING=""
-for command in nvim bat rg fd lf yadm gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx pnpm fnm starship zoxide; do
+for command in nvim bat rg fd lf yadm git gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg oha pipx pnpm fnm starship zoxide; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "    Missing command: $command" >&2
     MISSING="$MISSING $command"
@@ -349,8 +351,7 @@ fi
 # and hang in a non-interactive context. Pin GitHub's published
 # ed25519 host key (https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints)
 # instead of trusting unauthenticated `ssh-keyscan` output.
-mkdir -p "$HOME/.ssh"
-chmod 700 "$HOME/.ssh"
+# $HOME/.ssh was created (mode 700) in step 9.
 GITHUB_HOST_KEY="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
 # Add the pinned key only if that exact line is absent -- checking
 # `ssh-keygen -F github.com` would skip even when the only entry

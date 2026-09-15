@@ -101,7 +101,7 @@ The Mac flow is **zsh, not bash** — a fresh Mac's `/bin/zsh` is always a recen
 1. **Xcode Command Line Tools** — installs via a one-click GUI dialog (`xcode-select --install`) and waits for it to finish; Homebrew needs the compiler toolchain.
 2. **Homebrew** — non-interactive install (Apple Silicon or Intel, whichever the Mac is).
 3. **Shell env** — oh-my-zsh (unattended), the custom plugins it doesn't bundle (zsh-completions, zsh-autosuggestions, you-should-use, fast-syntax-highlighting), starship prompt. zsh is already the default on macOS, so no `chsh` needed.
-4. **Brew formulas** — `neovim bat ripgrep fd lf yadm` (the VPS core) plus `gh lazygit git-delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx pnpm fnm starship zoxide`. macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
+4. **Brew formulas** — `neovim bat ripgrep fd lf yadm` (the VPS core) plus `git gh lazygit git-delta jq uv bun btop chafa glow fastfetch ffmpeg oha pipx pnpm fnm starship zoxide`. `git` upgrades the CLT's older build; macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
 5. **Neovim** — vim-plug, plus the undodir `init.vim` expects.
 6. **Node via fnm** — installed via Homebrew, latest LTS made the default.
 7. **1Password SSH agent** — links `~/.1password/agent.sock` to the agent socket in 1Password's group container and writes `~/.ssh/config` with `IdentityAgent ~/.1password/agent.sock`. No key is generated on the Mac.
