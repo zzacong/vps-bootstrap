@@ -120,8 +120,8 @@ fi
 # 1. Shell environment: oh-my-zsh + plugins + starship
 # ------------------------------------------------------------
 # --unattended skips the interactive prompts and does NOT change
-# the default shell (zsh is already the default on macOS, checked
-# in step 7). The installer hard-exits 1 if the target directory
+# the default shell (zsh is already the default on macOS). The
+# installer hard-exits 1 if the target directory
 # already exists, so guard it to stay re-runnable.
 #
 # Mirror the installer's own resolution so the guard and the
@@ -234,16 +234,15 @@ if [ -n "$MISSING" ]; then
   exit 1
 fi
 
-# The two Nerd Fonts cover the terminal and nvim statusline; keycastr
-# is the keystroke overlay; blackhole-2ch is a virtual audio device.
-# Fonts install per-user, keycastr is an app, and blackhole-2ch
-# installs a system pkg, so it asks for your password and needs a
-# reboot before the device appears.
+# The two Nerd Fonts cover the terminal and nvim statusline;
+# keycastr is the keystroke overlay. Fonts install per-user and
+# keycastr is an app, so neither asks for a password. blackhole-2ch
+# installs a system pkg and installs near the end instead, so a
+# declined password does not abort the steps that matter.
 CASKS=(
   font-caskaydia-cove-nerd-font
   font-geist-mono-nerd-font
   keycastr
-  blackhole-2ch
 )
 echo "### Installing brew casks: ${CASKS[*]} ###"
 brew install --cask "${CASKS[@]}"
@@ -340,20 +339,7 @@ for app in yt-dlp; do
 done
 
 # ------------------------------------------------------------
-# 7. Ensure zsh is the default shell
-# ------------------------------------------------------------
-# zsh is the default login shell on macOS since Catalina, so this
-# is normally a no-op -- the guard exists for older/odd setups.
-echo "### Ensuring zsh is the default shell ###"
-if [ "$SHELL" != "$(command -v zsh)" ]; then
-  echo "    Changing default shell to zsh (you may be asked for your password)."
-  chsh -s "$(command -v zsh)"
-else
-  echo "    Already zsh."
-fi
-
-# ------------------------------------------------------------
-# 8. 1Password SSH agent (the GitHub credential)
+# 7. 1Password SSH agent (the GitHub credential)
 # ------------------------------------------------------------
 # Like the VPS flow, this Mac keeps no GitHub key of its own: the
 # operator's 1Password key signs the dotfiles clone (ADR-0006).
@@ -400,14 +386,14 @@ else
 fi
 
 # ------------------------------------------------------------
-# 9. Dotfiles
+# 8. Dotfiles
 # ------------------------------------------------------------
 # yadm clones over SSH; pre-seed known_hosts so the first
 # connection to github.com doesn't prompt for host confirmation
 # and hang in a non-interactive context. Pin GitHub's published
 # ed25519 host key (https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints)
 # instead of trusting unauthenticated `ssh-keyscan` output.
-# $HOME/.ssh was created (mode 700) in step 8.
+# $HOME/.ssh was created (mode 700) in step 7.
 GITHUB_HOST_KEY="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
 # Add the pinned key only if that exact line is absent -- checking
 # `ssh-keygen -F github.com` would skip even when the only entry
@@ -453,7 +439,10 @@ if [ -d "$YADM_REPO_DIR" ]; then
   if [ -n "$(yadm status --porcelain 2>/dev/null)" ]; then
     echo "    Local yadm changes exist; NOT pulling. Review with 'yadm status'." >&2
   else
-    yadm pull
+    # --ff-only: a divergent history is not something to resolve
+    # unattended, and a fresh git has no pull.rebase/ff set, so a
+    # plain `yadm pull` would abort with a config error.
+    yadm pull --ff-only
     echo "    Pulled latest."
   fi
 else
@@ -488,7 +477,7 @@ else
 fi
 
 # ------------------------------------------------------------
-# 10. Git config (baseline)
+# 9. Git config (baseline)
 # ------------------------------------------------------------
 # Runs after the yadm clone so a .gitconfig from the dotfiles is
 # already the base and these values layer on top. `git config
@@ -524,7 +513,7 @@ if [ -n "$MISSING" ]; then
 fi
 
 # ------------------------------------------------------------
-# 11. pnpm global CLIs
+# 10. pnpm global CLIs
 # ------------------------------------------------------------
 # Runs after the yadm clone so a ~/.npmrc from the dotfiles is
 # already in place for private scoped packages. pnpm is from brew
@@ -558,7 +547,7 @@ if [ -n "$MISSING" ]; then
 fi
 
 # ------------------------------------------------------------
-# 12. Neovim plugins
+# 11. Neovim plugins
 # ------------------------------------------------------------
 # Install the plugins listed in ~/.config/nvim/init.vim. This
 # needs init.vim to exist (from the yadm clone above).
@@ -578,6 +567,21 @@ if [ -f "$HOME/.config/nvim/init.vim" ]; then
   nvim --headless -u "$PLUG_VIMRC" +'PlugInstall --sync' +qa
 else
   echo "    No ~/.config/nvim/init.vim found; skipping PlugInstall."
+fi
+
+# ------------------------------------------------------------
+# 12. BlackHole virtual audio device (a system pkg, so it asks
+#     for your password and needs a reboot)
+# ------------------------------------------------------------
+# Kept out of the cask batch in step 2 on purpose: a pkg install
+# needs an admin password, and under `set -e` a declined prompt
+# would kill the run before the dotfiles and tooling land.
+BLACKHOLE_CASK="blackhole-2ch"
+echo "### Installing $BLACKHOLE_CASK (system pkg; asks for your password) ###"
+brew install --cask "$BLACKHOLE_CASK"
+if ! brew list --cask "$BLACKHOLE_CASK" >/dev/null 2>&1; then
+  echo "    Missing cask: $BLACKHOLE_CASK -- fix the brew install, then re-run." >&2
+  exit 1
 fi
 
 echo ""

@@ -122,7 +122,7 @@ The Mac flow is **zsh, not bash**. A fresh Mac's `/bin/zsh` is always a recent 5
 
 1. **Shell env:** oh-my-zsh (unattended), the custom plugins it doesn't bundle (zsh-completions, zsh-autosuggestions, you-should-use, fast-syntax-highlighting), and the starship prompt. zsh is already the default on macOS, so no `chsh` is needed.
 2. **Brew formulae:** `neovim bat ripgrep fd lf yadm` (the VPS core) plus `git gh lazygit git-delta jq uv bun btop chafa glow fastfetch ffmpeg oha pipx pnpm fnm starship zoxide zig go azure-cli`. `git` upgrades the CLT's older build, and macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
-3. **Brew casks:** `font-caskaydia-cove-nerd-font font-geist-mono-nerd-font keycastr blackhole-2ch`. The fonts install per-user, keycastr is an app, and blackhole-2ch installs a system pkg. That last one asks for your password, and the virtual audio device needs a reboot.
+3. **Brew casks:** `font-caskaydia-cove-nerd-font font-geist-mono-nerd-font keycastr`. The fonts install per-user and keycastr is an app, so this batch needs no password.
 4. **Neovim:** vim-plug, plus the undodir `init.vim` expects.
 5. **Node via fnm:** installed through Homebrew, latest LTS made the default.
 6. **Rust via rustup:** the official installer, run with `--no-modify-path` so it doesn't edit shell files. rustup still writes `~/.cargo/env`, which the dotfiles' `.zshrc` already sources.
@@ -132,6 +132,7 @@ The Mac flow is **zsh, not bash**. A fresh Mac's `/bin/zsh` is always a recent 5
 10. **Git config:** sets `user.name`, `user.email`, delta as the pager, and `merge.conflictStyle = zdiff3`. These layer on top of the dotfiles' `.gitconfig`, so a tracked one there stays the base.
 11. **pnpm global CLIs:** `@earendil-works/pi-coding-agent @opencode/cli @zzacong/fleet ccusage skills vercel`. This runs after the clone so a `~/.npmrc` from the dotfiles is available to private scoped packages.
 12. **Neovim plugins:** runs vim-plug against the `init.vim` the clone brought in.
+13. **BlackHole virtual audio device:** `blackhole-2ch` last, since it installs a system pkg. It asks for your password, and the device needs a reboot. Keeping it at the end means a declined password cannot abort the dotfiles and tooling steps.
 
 ## Coming back after three months
 
