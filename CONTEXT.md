@@ -1,6 +1,6 @@
 # Machine Bootstrap Context
 
-Provisioning a fresh machine into a usable dev box via two flows: the three-step VPS flow (`setup-root.sh`, `setup-ssh.sh`, `setup-user.sh`) for a fresh Ubuntu host, plus `setup-squid.sh`, a standalone extract of setup-user.sh's optional Squid section used to re-run or fix just the proxy config; and the single-script Mac flow (`setup-mac.sh`) for a new MacBook. Both converge on the same shell (zsh + oh-my-zsh + starship), editor (neovim + vim-plug), Node (fnm), and yadm-managed dotfiles.
+Provisioning a fresh machine into a usable dev box via two flows: the three-step VPS flow (`setup-root.sh`, `setup-ssh.sh`, `setup-user.sh`) for a fresh Ubuntu host, plus `setup-squid.sh`, a standalone extract of setup-user.sh's optional Squid section used to re-run or fix just the proxy config; and the Mac flow (`setup-mac.sh`) for a new MacBook, which assumes three manual prerequisites (Command Line Tools, Homebrew, 1Password). Both converge on the same shell (zsh + oh-my-zsh + starship), editor (neovim + vim-plug), Node (fnm), and yadm-managed dotfiles.
 
 ## Language
 
@@ -55,8 +55,12 @@ _Avoid_: Default shell files, rc files
 ### Mac flow
 
 **Command Line Tools**:
-Apple's Xcode Command Line Tools, the compiler toolchain Homebrew requires; installed via a one-click GUI dialog (`xcode-select --install`) before Homebrew.
+Apple's Xcode Command Line Tools, the compiler toolchain Homebrew requires. A manual prerequisite of the Mac flow: the operator runs `xcode-select --install` (a one-click GUI dialog) before the script, and the script's preflight asserts it is present.
 _Avoid_: Xcode, CLT
+
+**Manual prerequisite**:
+A Mac-flow requirement the script does not install itself: Command Line Tools, Homebrew, and a signed-in 1Password with its SSH agent enabled. The README lists the commands; the script's preflight asserts each and exits with the command to run when one is missing.
+_Avoid_: Dependency, requirement
 
 **Agent socket link**:
 `~/.1password/agent.sock`, a symlink `setup-mac.sh` creates to the SSH agent socket inside 1Password's macOS group container (`~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock`), so `~/.ssh/config` can name the short, stable path. Needed because macOS sets `SSH_AUTH_SOCK` to its own agent rather than 1Password's (ADR-0006).

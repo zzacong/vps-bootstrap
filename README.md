@@ -3,7 +3,7 @@
 Two provisioning flows, both converging on the same shell (zsh + oh-my-zsh + starship), editor (neovim + vim-plug), Node (fnm), and yadm-managed dotfiles:
 
 - **[VPS flow](#vps-flow)** — a fresh Ubuntu VPS (24.04+), three scripts in order.
-- **[Mac flow](#mac-flow)** — a new MacBook, one script.
+- **[Mac flow](#mac-flow)** — a new MacBook, one script after three manual prerequisites.
 
 Everything user-level lives in `zzacong/dotfiles`, managed by yadm; this repo only *bootstraps* the machine.
 
@@ -88,26 +88,50 @@ If a reboot is pending (kernel update), it tells you.
 
 ## Mac flow
 
-Turns a brand-new MacBook into a usable dev box in one script. Unlike the VPS there's no root/user/key split — the Mac is your own machine, so everything runs as your normal login. It happens rarely (a new MacBook), but when it does the script is safe to re-run.
+Turns a new MacBook into a usable dev box. Unlike the VPS there is no root/user/key split: the Mac is your own machine, so everything runs as your normal login. It happens rarely, but when it does the script is safe to re-run.
+
+Three things the script cannot install itself. Do these first.
+
+**1. Xcode Command Line Tools.** Homebrew needs the compiler toolchain:
+
+```bash
+xcode-select --install
+```
+
+Click Install in the dialog and wait for it to finish.
+
+**2. Homebrew.** The official installer works on both Apple Silicon and Intel:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+If the installer tells you to add a `shellenv` line to your shell profile, put that line in your dotfiles, not `~/.zprofile`. The script moves the shell files Homebrew wrote aside when it clones the dotfiles, so a line left in `~/.zprofile` disappears.
+
+**3. 1Password.** Install and sign in, turn on **Settings → Developer → SSH agent**, and make sure the key's public half is already on the GitHub account that owns the dotfiles. The script keeps no GitHub key of its own (ADR-0006), so this is its only credential.
+
+Then run the script:
 
 ```bash
 zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/main/setup-mac.sh)"
 ```
 
-The Mac flow is **zsh, not bash** — a fresh Mac's `/bin/zsh` is always a recent 5.x, while its `/bin/bash` is frozen at 3.2 (2007) until Homebrew replaces it. zsh is the only guaranteed-modern interpreter on a new Mac. `zsh -c "$(curl …)"` also keeps your terminal as the script's stdin (same reason the VPS flow uses `bash -c`), so the interactive prompts work.
+The Mac flow is **zsh, not bash**. A fresh Mac's `/bin/zsh` is always a recent 5.x, while its `/bin/bash` is frozen at 3.2 from 2007 until Homebrew replaces it, so zsh is the only guaranteed-modern interpreter. `zsh -c "$(curl …)"` also keeps your terminal as the script's stdin, same as the VPS flow's `bash -c`, so any prompts work.
 
-**What it does**, in order:
+**What it does**, in order. The first step is a preflight that asserts the three prerequisites above, so a missing one stops the script immediately rather than after it installs a batch of packages.
 
-1. **Xcode Command Line Tools** — installs via a one-click GUI dialog (`xcode-select --install`) and waits for it to finish; Homebrew needs the compiler toolchain.
-2. **Homebrew** — non-interactive install (Apple Silicon or Intel, whichever the Mac is).
-3. **Shell env** — oh-my-zsh (unattended), the custom plugins it doesn't bundle (zsh-completions, zsh-autosuggestions, you-should-use, fast-syntax-highlighting), starship prompt. zsh is already the default on macOS, so no `chsh` needed.
-4. **Brew formulas** — `neovim bat ripgrep fd lf yadm` (the VPS core) plus `gh lazygit git-delta jq uv bun btop chafa glow fastfetch ffmpeg mkcert oha pipx pnpm fnm starship zoxide`. macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
-5. **Neovim** — vim-plug, plus the undodir `init.vim` expects.
-6. **Node via fnm** — installed via Homebrew, latest LTS made the default.
-7. **1Password SSH agent** — links `~/.1password/agent.sock` to the agent socket in 1Password's group container and writes `~/.ssh/config` with `IdentityAgent ~/.1password/agent.sock`. No key is generated on the Mac.
-8. **Dotfiles (yadm bootstrap)** — backs up the shell files oh-my-zsh/Homebrew wrote, pre-seeds GitHub's pinned host key, `yadm clone`s your dotfiles, then runs vim-plug against your `init.vim`.
-
-**Before you run it**, install and sign in to 1Password with **Settings → Developer → SSH agent** turned on, holding a key whose public half is already on the GitHub account that owns the dotfiles. The script can't do any of that itself, so it fails fast with that checklist when the agent is missing or GitHub refuses it (ADR-0006).
+1. **Shell env:** oh-my-zsh (unattended), the custom plugins it doesn't bundle (zsh-completions, zsh-autosuggestions, you-should-use, fast-syntax-highlighting), and the starship prompt. zsh is already the default on macOS, so no `chsh` is needed.
+2. **Brew formulae:** `neovim bat ripgrep fd lf yadm` (the VPS core) plus `git gh lazygit git-delta jq uv bun btop chafa glow fastfetch ffmpeg oha pipx pnpm fnm starship zoxide zig go azure-cli`. `git` upgrades the CLT's older build, and macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
+3. **Brew casks:** `font-caskaydia-cove-nerd-font font-geist-mono-nerd-font keycastr blackhole-2ch`. The fonts install per-user, keycastr is an app, and blackhole-2ch installs a system pkg. That last one asks for your password, and the virtual audio device needs a reboot.
+4. **Neovim:** vim-plug, plus the undodir `init.vim` expects.
+5. **Node via fnm:** installed through Homebrew, latest LTS made the default.
+6. **Rust via rustup:** the official installer, run with `--no-modify-path` so it doesn't edit shell files. rustup still writes `~/.cargo/env`, which the dotfiles' `.zshrc` already sources.
+7. **pipx apps:** `yt-dlp`.
+8. **1Password SSH agent:** links `~/.1password/agent.sock` to the agent socket in 1Password's group container and writes `~/.ssh/config` with `IdentityAgent ~/.1password/agent.sock`. No key is generated on the Mac.
+9. **Dotfiles (yadm bootstrap):** backs up the shell files the tools wrote, pre-seeds GitHub's pinned host key, proves the agent authenticates to GitHub, then `yadm clone`s your dotfiles.
+10. **Git config:** sets `user.name`, `user.email`, delta as the pager, and `merge.conflictStyle = zdiff3`. These layer on top of the dotfiles' `.gitconfig`, so a tracked one there stays the base.
+11. **pnpm global CLIs:** `@earendil-works/pi-coding-agent @opencode/cli @zzacong/fleet ccusage skills vercel`. This runs after the clone so a `~/.npmrc` from the dotfiles is available to private scoped packages.
+12. **Neovim plugins:** runs vim-plug against the `init.vim` the clone brought in.
 
 ## Coming back after three months
 
@@ -124,6 +148,6 @@ The Mac flow is **zsh, not bash** — a fresh Mac's `/bin/zsh` is always a recen
 | `setup-ssh.sh` | Step 2 (VPS) — host key install (as root) |
 | `setup-user.sh` | Step 3 (VPS) — packages, shell, dotfiles, hardening, optional firewall/proxy (as new user) |
 | `setup-squid.sh` | Standalone extract of setup-user.sh's optional Squid section, for re-running/fixing just the proxy config |
-| `setup-mac.sh` | Mac — CLT, Homebrew, shell, formulas, fnm/Node, 1Password agent, dotfiles (as the user) |
+| `setup-mac.sh` | Mac — shell, brew formulae and casks, fnm/Node, rustup, pipx, 1Password agent, base git config, pnpm globals, dotfiles (as the user). Prerequisites: CLT, Homebrew, 1Password |
 | `CONTEXT.md` | Shared vocabulary for the scripts (host key, forwarded agent, …) |
 | `docs/adr/` | Design decision records (e.g. 1Password agent forwarding, the Mac agent policy) |
