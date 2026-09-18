@@ -526,8 +526,30 @@ PNPM_GLOBALS=(
   skills
   vercel
 )
+# pnpm 10+ refuses to run dependency build scripts unless they are
+# allowlisted, and `pnpm add -g` still exits 0 when it skips them. That
+# silently breaks @opencode/cli: its postinstall is what copies the
+# platform binary out of @opencode/cli-darwin-arm64 into bin/opencode.exe,
+# so without it the bin shim exists but every call dies with
+# "postinstall script was not run". The other three are only noise --
+# @google/genai's preinstall and protobufjs's postinstall do nothing useful
+# and esbuild finds its binary via optionalDependencies -- but approving
+# them keeps the run quiet and matches the global allowBuilds on an
+# already-provisioned Mac. --allow-build runs the scripts during this
+# install and appends them to allowBuilds in
+# $PNPM_HOME/global/<layout>/pnpm-workspace.yaml, so no path needs guessing.
+PNPM_BUILDS=(
+  @opencode/cli
+  @google/genai
+  esbuild
+  protobufjs
+)
+PNPM_ALLOW_BUILD_FLAGS=()
+for pkg in "${PNPM_BUILDS[@]}"; do
+  PNPM_ALLOW_BUILD_FLAGS+=("--allow-build=$pkg")
+done
 echo "### Installing pnpm global packages: ${PNPM_GLOBALS[*]} ###"
-pnpm add -g "${PNPM_GLOBALS[@]}"
+pnpm add -g "${PNPM_ALLOW_BUILD_FLAGS[@]}" "${PNPM_GLOBALS[@]}"
 
 # pnpm's global bin dir is not on this shell's PATH (the dotfiles
 # export it for interactive shells), so verify against pnpm's own
