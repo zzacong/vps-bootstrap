@@ -130,7 +130,7 @@ The Mac flow is **zsh, not bash**. A fresh Mac's `/bin/zsh` is always a recent 5
 8. **1Password SSH agent:** links `~/.1password/agent.sock` to the agent socket in 1Password's group container and writes `~/.ssh/config` with `IdentityAgent ~/.1password/agent.sock`. No key is generated on the Mac.
 9. **Dotfiles (yadm bootstrap):** backs up the shell files the tools wrote, pre-seeds GitHub's pinned host key, proves the agent authenticates to GitHub, then `yadm clone`s your dotfiles.
 10. **Git config:** sets `user.name`, `user.email`, delta as the pager, and `merge.conflictStyle = zdiff3`. These layer on top of the dotfiles' `.gitconfig`, so a tracked one there stays the base.
-11. **pnpm global CLIs:** `@earendil-works/pi-coding-agent @opencode/cli @zzacong/fleet ccusage skills vercel`. This runs after the clone so a `~/.npmrc` from the dotfiles is available to private scoped packages.
+11. **pnpm global CLIs:** `@earendil-works/pi-coding-agent @opencode/cli @zzacong/fleet ccusage skills vercel`. This runs after the clone so a `~/.npmrc` from the dotfiles is available to private scoped packages. pnpm 10+ blocks dependency build scripts by default, so the install passes `--allow-build` for the four that have one — `@opencode/cli`'s postinstall is what unpacks its binary, and skipping it leaves a broken `opencode`.
 12. **Neovim plugins:** runs vim-plug against the `init.vim` the clone brought in.
 13. **BlackHole virtual audio device:** `blackhole-2ch` last, since it installs a system pkg. It asks for your password, and the device needs a reboot. Keeping it at the end means a declined password cannot abort the dotfiles and tooling steps.
 
