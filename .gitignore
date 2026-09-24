@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editor swap and backup files
+*.swp
+*.swo
+*~
