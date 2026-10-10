@@ -213,17 +213,20 @@ FORMULAS=(
   zoxide
   zig
   go
-  azure-cli
+  just
+  just-lsp
+  imagemagick
+  anomalyco/tap/opencode-v2
 )
 echo "### Installing brew formulas: ${FORMULAS[*]} ###"
 brew install "${FORMULAS[@]}"
 
 # Verify the installed binaries actually landed (Homebrew can
 # rename or drop formulas in future releases). git-delta ships
-# the `delta` binary, azure-cli ships `az`.
+# the `delta` binary, imagemagick ships `magick`.
 echo "### Verifying installed commands ###"
 MISSING=""
-for cmd in nvim bat rg fd lf yadm git gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg oha pipx pnpm fnm starship zoxide zig go az; do
+for cmd in nvim bat rg fd lf yadm git gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg oha pipx pnpm fnm starship zoxide zig go just just-lsp magick opencode; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "    Missing command: $cmd" >&2
     MISSING="$MISSING $cmd"
@@ -520,18 +523,17 @@ fi
 # and node from fnm, both installed above.
 PNPM_GLOBALS=(
   @earendil-works/pi-coding-agent
-  @opencode/cli
   @zzacong/fleet
+  agent-browser
   ccusage
   skills
   vercel
 )
 # pnpm 10+ refuses to run dependency build scripts unless they are
 # allowlisted, and `pnpm add -g` still exits 0 when it skips them. That
-# silently breaks @opencode/cli: its postinstall is what copies the
-# platform binary out of @opencode/cli-darwin-arm64 into bin/opencode.exe,
-# so without it the bin shim exists but every call dies with
-# "postinstall script was not run". The other three are only noise --
+# silently breaks agent-browser: its postinstall downloads the native
+# binary and repoints the global bin symlink at it, so without it the
+# install is left without that binary. The other three are only noise --
 # @google/genai's preinstall and protobufjs's postinstall do nothing useful
 # and esbuild finds its binary via optionalDependencies -- but approving
 # them keeps the run quiet and matches the global allowBuilds on an
@@ -539,7 +541,7 @@ PNPM_GLOBALS=(
 # install and appends them to allowBuilds in
 # $PNPM_HOME/global/<layout>/pnpm-workspace.yaml, so no path needs guessing.
 PNPM_BUILDS=(
-  @opencode/cli
+  agent-browser
   @google/genai
   esbuild
   protobufjs
