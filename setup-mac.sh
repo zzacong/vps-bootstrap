@@ -483,6 +483,17 @@ else
   fi
 
   if yadm clone -b main "$DOTFILES_REPO"; then
+    # yadm exits 0 even when local files differ from the repo and are
+    # left unmodified, so check the tree before calling this done.
+    LEFTOVER="$(yadm status --porcelain 2>/dev/null)"
+    if [ -n "$LEFTOVER" ]; then
+      echo "    yadm left these local files unmodified (they differ from the dotfiles):" >&2
+      echo "$LEFTOVER" | sed 's/^/      /' >&2
+      echo "    Review each with 'yadm diff <file>'. To take the dotfiles' versions," >&2
+      echo "    back the files up, then run: yadm checkout \"\$HOME\"" >&2
+      echo "    Then re-run this script." >&2
+      exit 1
+    fi
     echo "    Dotfiles cloned."
   else
     echo "    yadm clone failed (tracked file colliding with a shell default?); restore with:" >&2
