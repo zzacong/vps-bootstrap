@@ -636,7 +636,7 @@ fi
 
 echo ""
 echo "### Final environment check ###"
-for cmd in zsh nvim fd bat rg lf yadm gh fnm node npm pnpm starship zoxide zig go az cargo rustc; do
+for cmd in zsh nvim fd bat rg lf yadm gh fnm node npm pnpm starship zoxide zig go cargo rustc; do
   if command -v "$cmd" >/dev/null 2>&1; then
     echo "    OK  $cmd"
   else
