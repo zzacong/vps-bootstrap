@@ -562,12 +562,15 @@ PNPM_ALLOW_BUILD_FLAGS=()
 for pkg in "${PNPM_BUILDS[@]}"; do
   PNPM_ALLOW_BUILD_FLAGS+=("--allow-build=$pkg")
 done
+# pnpm refuses a global install unless its bin dir is on PATH. The
+# dotfiles' .zshrc adds it, but this script is not an interactive
+# shell and never sources that file, so add it here.
+export PATH="$HOME/Library/pnpm/bin:$PATH"
 echo "### Installing pnpm global packages: ${PNPM_GLOBALS[*]} ###"
 pnpm add -g "${PNPM_ALLOW_BUILD_FLAGS[@]}" "${PNPM_GLOBALS[@]}"
 
-# pnpm's global bin dir is not on this shell's PATH (the dotfiles
-# export it for interactive shells), so verify against pnpm's own
-# installed list rather than `command -v`.
+# Verify against pnpm's own installed list rather than `command -v`,
+# so the check doesn't depend on the PATH export above.
 echo "### Verifying pnpm global packages ###"
 PNPM_GLOBAL_LIST="$(pnpm list -g --depth 0 2>/dev/null || true)"
 MISSING=""
