@@ -371,16 +371,28 @@ chmod 700 "$HOME/.ssh"
 # macOS points SSH_AUTH_SOCK at its own agent, not 1Password's, so
 # the config line is what routes ssh (and the git clone) to the
 # 1Password key. The dotfiles don't track this file and the clone
-# is what needs it, so pre-seed it; an existing file is only
-# warned about, since it may carry hosts and options worth keeping.
-if [ ! -f "$HOME/.ssh/config" ]; then
+# is what needs it, so pre-seed it. Enabling 1Password's SSH agent
+# can write its own long IdentityAgent path into this file; that
+# line is rewritten to the short socket link above. Any other
+# existing file is only warned about, since it may carry hosts and
+# options worth keeping.
+SSH_CONFIG="$HOME/.ssh/config"
+OP_LONG_AGENT_RE='Group Containers/2BUA8C4S2C\.com\.1password/t/agent\.sock'
+if [ ! -f "$SSH_CONFIG" ]; then
   echo "### Writing ~/.ssh/config (1Password SSH agent) ###"
-  cat > "$HOME/.ssh/config" <<'EOF'
+  cat > "$SSH_CONFIG" <<'EOF'
 Host *
   IdentityAgent ~/.1password/agent.sock
 EOF
-  chmod 600 "$HOME/.ssh/config"
-elif ! grep -q "IdentityAgent" "$HOME/.ssh/config"; then
+  chmod 600 "$SSH_CONFIG"
+elif grep -qE "^[[:space:]]*IdentityAgent[[:space:]].*$OP_LONG_AGENT_RE" "$SSH_CONFIG"; then
+  echo "### Shortening 1Password IdentityAgent in ~/.ssh/config ###"
+  TMP_SSH_CONFIG="$(mktemp)"
+  CLEANUP_FILES+=("$TMP_SSH_CONFIG")
+  sed -E "s#^([[:space:]]*IdentityAgent[[:space:]]+).*${OP_LONG_AGENT_RE}.*\$#\1~/.1password/agent.sock#" "$SSH_CONFIG" > "$TMP_SSH_CONFIG"
+  # Write through the existing file so its 600 mode is kept.
+  cat "$TMP_SSH_CONFIG" > "$SSH_CONFIG"
+elif ! grep -q "IdentityAgent" "$SSH_CONFIG"; then
   echo "    ~/.ssh/config exists but names no IdentityAgent; add:" >&2
   echo "      Host *" >&2
   echo "        IdentityAgent ~/.1password/agent.sock" >&2
