@@ -108,7 +108,7 @@ Click Install in the dialog and wait for it to finish.
 
 If the installer tells you to add a `shellenv` line to your shell profile, put that line in your dotfiles, not `~/.zprofile`. The script moves the shell files Homebrew wrote aside when it clones the dotfiles, so a line left in `~/.zprofile` disappears.
 
-**3. 1Password.** Install and sign in, turn on **Settings → Developer → SSH agent**, and make sure the key's public half is already on the GitHub account that owns the dotfiles. The script keeps no GitHub key of its own (ADR-0006), so this is its only credential.
+**3. 1Password.** Install and sign in, turn on **Settings → Developer → SSH agent**, and make sure the key's public half is already on the GitHub account that owns the dotfiles. The script keeps no GitHub key of its own, so this is its only credential.
 
 Then run the script:
 
@@ -164,5 +164,4 @@ zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/mai
 | `setup-squid.sh` | Standalone extract of setup-user.sh's optional Squid section, for re-running/fixing just the proxy config |
 | `setup-mac.sh` | Mac — shell, brew formulae and casks, fnm/Node, rustup, pipx, 1Password agent, base git config, pnpm globals, dotfiles (as the user). Prerequisites: CLT, Homebrew, 1Password |
 | `setup-github-hosts.sh` | Mac — optional wizard that adds GitHub SSH host aliases to `~/.ssh/config` (run by `setup-mac.sh` or on its own) |
-| `CONTEXT.md` | Shared vocabulary for the scripts (host key, forwarded agent, …) |
-| `docs/adr/` | Design decision records (e.g. 1Password agent forwarding, the Mac agent policy) |
+| `GLOSSARY.md` | Shared vocabulary for the scripts (host key, forwarded agent, skel default, …) |
