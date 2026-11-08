@@ -133,6 +133,19 @@ The Mac flow is **zsh, not bash**. A fresh Mac's `/bin/zsh` is always a recent 5
 11. **pnpm global CLIs:** `@earendil-works/pi-coding-agent @zzacong/fleet agent-browser ccusage skills vercel`. This runs after the clone so a `~/.npmrc` from the dotfiles is available to private scoped packages. pnpm 10+ blocks dependency build scripts by default, so the install passes `--allow-build` for the four that have one — `agent-browser`'s postinstall downloads its native binary, and skipping it leaves the install without one.
 12. **Neovim plugins:** runs vim-plug against the `init.vim` the clone brought in.
 13. **BlackHole virtual audio device:** `blackhole-2ch` last, since it installs a system pkg. It asks for your password, and the device needs a reboot. Keeping it at the end means a declined password cannot abort the dotfiles and tooling steps.
+14. **Extra GitHub identities (optional):** asks first. If you say yes, it runs `setup-github-hosts.sh`, which adds a `Host` alias to `~/.ssh/config` for each GitHub account you need beyond the default. It runs after the clone so the dotfiles used the default `github.com` identity.
+
+### Adding GitHub identities
+
+The wizard asks for a Host alias (default `github.com`), HostName, User, and the public key line you paste from 1Password. It checks that the key is in the 1Password agent, and asks before it replaces an alias that already exists. It writes the block between `# BEGIN/END vps-bootstrap github hosts` markers at the end of `~/.ssh/config`. Each write keeps a timestamped backup. At the end it runs `ssh -T` for each alias it added and reports the result.
+
+Existing `github*` blocks outside the markers move inside on the next write. Hand-written blocks for other hosts are left alone.
+
+Run it on its own any time:
+
+```bash
+zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/main/setup-github-hosts.sh)"
+```
 
 ## Coming back after three months
 
@@ -150,5 +163,6 @@ The Mac flow is **zsh, not bash**. A fresh Mac's `/bin/zsh` is always a recent 5
 | `setup-user.sh` | Step 3 (VPS) — packages, shell, dotfiles, hardening, optional firewall/proxy (as new user) |
 | `setup-squid.sh` | Standalone extract of setup-user.sh's optional Squid section, for re-running/fixing just the proxy config |
 | `setup-mac.sh` | Mac — shell, brew formulae and casks, fnm/Node, rustup, pipx, 1Password agent, base git config, pnpm globals, dotfiles (as the user). Prerequisites: CLT, Homebrew, 1Password |
+| `setup-github-hosts.sh` | Mac — optional wizard that adds GitHub SSH host aliases to `~/.ssh/config` (run by `setup-mac.sh` or on its own) |
 | `CONTEXT.md` | Shared vocabulary for the scripts (host key, forwarded agent, …) |
 | `docs/adr/` | Design decision records (e.g. 1Password agent forwarding, the Mac agent policy) |
