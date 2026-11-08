@@ -106,7 +106,7 @@ eval "$("$HOMEBREW_PREFIX/bin/brew" shellenv)"
 # something a bootstrap can install, so check for the container and
 # fail with the checklist rather than at the clone with a bare
 # publickey error.
-OP_AGENT_SOCK="$HOME/.1password/agent.sock"
+OP_AGENT_SOCK="$HOME/.config/1password/agent.sock"
 OP_AGENT_TARGET="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
 if [ ! -d "$(dirname "$OP_AGENT_TARGET")" ]; then
   echo "1Password is not set up on this Mac." >&2
@@ -347,11 +347,11 @@ done
 # Like the VPS flow, this Mac keeps no GitHub key of its own: the
 # operator's 1Password key signs the dotfiles clone (ADR-0006).
 # 1Password's agent listens on a socket inside the app's group
-# container; ~/.1password/agent.sock is a stable short path to
+# container; ~/.config/1password/agent.sock is a stable short path to
 # it, and ~/.ssh/config points IdentityAgent at that path. A
 # fresh Mac has neither, so create both before the clone. The
 # container itself was asserted in the preflight.
-mkdir -p "$HOME/.1password"
+mkdir -p "$(dirname "$OP_AGENT_SOCK")"
 if [ -L "$OP_AGENT_SOCK" ]; then
   # Re-point a stale link. A real file there is left alone: better
   # to warn than to clobber something put there on purpose.
@@ -377,25 +377,27 @@ chmod 700 "$HOME/.ssh"
 # existing file is only warned about, since it may carry hosts and
 # options worth keeping.
 SSH_CONFIG="$HOME/.ssh/config"
-OP_LONG_AGENT_RE='Group Containers/2BUA8C4S2C\.com\.1password/t/agent\.sock'
+# Matches the long container path (what 1Password writes) and the old
+# ~/.1password short path (what earlier runs of this script wrote).
+OP_STALE_AGENT_RE='(Group Containers/2BUA8C4S2C\.com\.1password/t/agent\.sock|~/\.1password/agent\.sock)'
 if [ ! -f "$SSH_CONFIG" ]; then
   echo "### Writing ~/.ssh/config (1Password SSH agent) ###"
   cat > "$SSH_CONFIG" <<'EOF'
 Host *
-  IdentityAgent ~/.1password/agent.sock
+  IdentityAgent ~/.config/1password/agent.sock
 EOF
   chmod 600 "$SSH_CONFIG"
-elif grep -qE "^[[:space:]]*IdentityAgent[[:space:]].*$OP_LONG_AGENT_RE" "$SSH_CONFIG"; then
-  echo "### Shortening 1Password IdentityAgent in ~/.ssh/config ###"
+elif grep -qE "^[[:space:]]*IdentityAgent[[:space:]].*$OP_STALE_AGENT_RE" "$SSH_CONFIG"; then
+  echo "### Pointing 1Password IdentityAgent in ~/.ssh/config at ~/.config/1password ###"
   TMP_SSH_CONFIG="$(mktemp)"
   CLEANUP_FILES+=("$TMP_SSH_CONFIG")
-  sed -E "s#^([[:space:]]*IdentityAgent[[:space:]]+).*${OP_LONG_AGENT_RE}.*\$#\1~/.1password/agent.sock#" "$SSH_CONFIG" > "$TMP_SSH_CONFIG"
+  sed -E "s#^([[:space:]]*IdentityAgent[[:space:]]+).*${OP_STALE_AGENT_RE}.*\$#\1~/.config/1password/agent.sock#" "$SSH_CONFIG" > "$TMP_SSH_CONFIG"
   # Write through the existing file so its 600 mode is kept.
   cat "$TMP_SSH_CONFIG" > "$SSH_CONFIG"
 elif ! grep -q "IdentityAgent" "$SSH_CONFIG"; then
   echo "    ~/.ssh/config exists but names no IdentityAgent; add:" >&2
   echo "      Host *" >&2
-  echo "        IdentityAgent ~/.1password/agent.sock" >&2
+  echo "        IdentityAgent ~/.config/1password/agent.sock" >&2
 else
   echo "    ~/.ssh/config already names an IdentityAgent; leaving it alone."
 fi

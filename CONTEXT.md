@@ -63,5 +63,5 @@ A Mac-flow requirement the script does not install itself: Command Line Tools, H
 _Avoid_: Dependency, requirement
 
 **Agent socket link**:
-`~/.1password/agent.sock`, a symlink `setup-mac.sh` creates to the SSH agent socket inside 1Password's macOS group container (`~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock`), so `~/.ssh/config` can name the short, stable path. Needed because macOS sets `SSH_AUTH_SOCK` to its own agent rather than 1Password's (ADR-0006).
+`~/.config/1password/agent.sock`, a symlink `setup-mac.sh` creates to the SSH agent socket inside 1Password's macOS group container (`~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock`), so `~/.ssh/config` can name the short, stable path. Needed because macOS sets `SSH_AUTH_SOCK` to its own agent rather than 1Password's (ADR-0006).
 _Avoid_: Agent socket, ssh config entry

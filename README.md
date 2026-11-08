@@ -127,7 +127,7 @@ The Mac flow is **zsh, not bash**. A fresh Mac's `/bin/zsh` is always a recent 5
 5. **Node via fnm:** installed through Homebrew, latest LTS made the default.
 6. **Rust via rustup:** the official installer, run with `--no-modify-path` so it doesn't edit shell files. rustup still writes `~/.cargo/env`, which the dotfiles' `.zshrc` already sources.
 7. **pipx apps:** `yt-dlp`.
-8. **1Password SSH agent:** links `~/.1password/agent.sock` to the agent socket in 1Password's group container and writes `~/.ssh/config` with `IdentityAgent ~/.1password/agent.sock`. No key is generated on the Mac.
+8. **1Password SSH agent:** links `~/.config/1password/agent.sock` to the agent socket in 1Password's group container and writes `~/.ssh/config` with `IdentityAgent ~/.config/1password/agent.sock`. No key is generated on the Mac.
 9. **Dotfiles (yadm bootstrap):** backs up the shell files the tools wrote, pre-seeds GitHub's pinned host key, proves the agent authenticates to GitHub, then `yadm clone`s your dotfiles.
 10. **Git config:** sets `user.name`, `user.email`, delta as the pager, and `merge.conflictStyle = zdiff3`. These layer on top of the dotfiles' `.gitconfig`, so a tracked one there stays the base.
 11. **pnpm global CLIs:** `@earendil-works/pi-coding-agent @zzacong/fleet agent-browser ccusage skills vercel`. This runs after the clone so a `~/.npmrc` from the dotfiles is available to private scoped packages. pnpm 10+ blocks dependency build scripts by default, so the install passes `--allow-build` for the four that have one — `agent-browser`'s postinstall downloads its native binary, and skipping it leaves the install without one.
