@@ -637,6 +637,25 @@ if ! brew list --cask "$BLACKHOLE_CASK" >/dev/null 2>&1; then
 fi
 
 echo ""
+# ------------------------------------------------------------
+# 13. Optional: extra GitHub SSH identities
+# ------------------------------------------------------------
+# Runs after the dotfiles clone, so the clone already used the
+# current github.com identity. The wizard only adds ~/.ssh/config
+# host aliases; it runs only when you say yes. Run from this repo
+# when it's next to this script, otherwise fetch it from main.
+read -r "ADD_GITHUB_HOSTS?Add extra GitHub SSH host aliases now? (y/N): " || ADD_GITHUB_HOSTS=""
+if [[ "$ADD_GITHUB_HOSTS" == [Yy]* ]]; then
+  if [ -f "${0:A:h}/setup-github-hosts.sh" ]; then
+    zsh "${0:A:h}/setup-github-hosts.sh" || GITHUB_HOSTS_FAILED=1
+  else
+    zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/main/setup-github-hosts.sh)" || GITHUB_HOSTS_FAILED=1
+  fi
+  if [ -n "${GITHUB_HOSTS_FAILED:-}" ]; then
+    echo "    GitHub host setup did not finish. Re-run it with: zsh setup-github-hosts.sh" >&2
+  fi
+fi
+
 echo "### Final environment check ###"
 for cmd in zsh nvim fd bat rg lf yadm gh fnm node npm pnpm starship zoxide zig go cargo rustc; do
   if command -v "$cmd" >/dev/null 2>&1; then
