@@ -121,12 +121,12 @@ The Mac flow is **zsh, not bash**. A fresh Mac's `/bin/zsh` is always a recent 5
 **What it does**, in order. The first step is a preflight that asserts the three prerequisites above, so a missing one stops the script immediately rather than after it installs a batch of packages.
 
 1. **Shell env:** oh-my-zsh (unattended), the custom plugins it doesn't bundle (zsh-completions, zsh-autosuggestions, you-should-use, fast-syntax-highlighting), and the starship prompt. zsh is already the default on macOS, so no `chsh` is needed.
-2. **Brew formulae:** `neovim bat ripgrep fd lf yadm` (the VPS core) plus `git gh lazygit git-delta jq uv bun btop chafa glow fastfetch ffmpeg oha pipx pnpm fnm starship zoxide zig go just just-lsp imagemagick anomalyco/tap/opencode-v2`. `git` upgrades the CLT's older build, and macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
+2. **Brew formulae:** `neovim bat ripgrep fd lf yadm` (the VPS core) plus `git gh lazygit git-delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm starship zoxide zig go just just-lsp imagemagick`. `git` upgrades the CLT's older build, and macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
 3. **Brew casks:** `font-caskaydia-cove-nerd-font font-geist-mono-nerd-font keycastr`. The fonts install per-user and keycastr is an app, so this batch needs no password.
 4. **Neovim:** vim-plug, plus the undodir `init.vim` expects.
 5. **Node via fnm:** installed through Homebrew, latest LTS made the default.
 6. **Rust via rustup:** the official installer, run with `--no-modify-path` so it doesn't edit shell files. rustup still writes `~/.cargo/env`, which the dotfiles' `.zshrc` already sources.
-7. **pipx apps:** `yt-dlp`.
+7. **uv tools:** `yt-dlp`, in its own venv. `uv` is already on PATH from the brew batch, and the tool links into `~/.local/bin`.
 8. **1Password SSH agent:** links `~/.config/1password/agent.sock` to the agent socket in 1Password's group container and writes `~/.ssh/config` with `IdentityAgent ~/.config/1password/agent.sock`. No key is generated on the Mac.
 9. **Dotfiles (yadm bootstrap):** backs up the shell files the tools wrote, pre-seeds GitHub's pinned host key, proves the agent authenticates to GitHub, then `yadm clone`s your dotfiles.
 10. **Git config:** sets `user.name`, `user.email`, delta as the pager, and `merge.conflictStyle = zdiff3`. These layer on top of the dotfiles' `.gitconfig`, so a tracked one there stays the base.
@@ -162,6 +162,6 @@ zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/mai
 | `setup-ssh.sh` | Step 2 (VPS) — host key install (as root) |
 | `setup-user.sh` | Step 3 (VPS) — packages, shell, dotfiles, hardening, optional firewall/proxy (as new user) |
 | `setup-squid.sh` | Standalone extract of setup-user.sh's optional Squid section, for re-running/fixing just the proxy config |
-| `setup-mac.sh` | Mac — shell, brew formulae and casks, fnm/Node, rustup, pipx, 1Password agent, base git config, pnpm globals, dotfiles (as the user). Prerequisites: CLT, Homebrew, 1Password |
+| `setup-mac.sh` | Mac — shell, brew formulae and casks, fnm/Node, rustup, uv tools, 1Password agent, base git config, pnpm globals, dotfiles (as the user). Prerequisites: CLT, Homebrew, 1Password |
 | `setup-github-hosts.sh` | Mac — optional wizard that adds GitHub SSH host aliases to `~/.ssh/config` (run by `setup-mac.sh` or on its own) |
 | `GLOSSARY.md` | Shared vocabulary for the scripts (host key, forwarded agent, skel default, …) |

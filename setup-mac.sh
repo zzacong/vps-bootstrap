@@ -16,8 +16,8 @@
 #   zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/main/setup-mac.sh)"
 #
 # Installs the shell env (zsh + oh-my-zsh + plugins + starship),
-# brew formulae and casks, Node via fnm, Rust via rustup, pipx
-# apps, and then yadm-clones the dotfiles.
+# brew formulae and casks, Node via fnm, Rust via rustup, uv
+# tools, and then yadm-clones the dotfiles.
 #
 # This script is zsh, not bash: macOS ships a recent zsh (5.x)
 # but its /bin/bash is frozen at 3.2 (2007) until Homebrew
@@ -206,7 +206,6 @@ FORMULAS=(
   fastfetch
   ffmpeg
   oha
-  pipx
   pnpm
   fnm
   starship
@@ -216,7 +215,6 @@ FORMULAS=(
   just
   just-lsp
   imagemagick
-  anomalyco/tap/opencode-v2
 )
 echo "### Installing brew formulas: ${FORMULAS[*]} ###"
 brew install "${FORMULAS[@]}"
@@ -226,7 +224,7 @@ brew install "${FORMULAS[@]}"
 # the `delta` binary, imagemagick ships `magick`.
 echo "### Verifying installed commands ###"
 MISSING=""
-for cmd in nvim bat rg fd lf yadm git gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg oha pipx pnpm fnm starship zoxide zig go just just-lsp magick opencode; do
+for cmd in nvim bat rg fd lf yadm git gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm starship zoxide zig go just just-lsp magick; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "    Missing command: $cmd" >&2
     MISSING="$MISSING $cmd"
@@ -325,27 +323,29 @@ if [ -n "$MISSING" ]; then
 fi
 
 # ------------------------------------------------------------
-# 6. pipx apps (Python CLIs, each in its own venv)
+# 6. uv tools (Python CLIs, each in its own venv)
 # ------------------------------------------------------------
-# pipx (from brew above) installs Python CLIs into ~/.local/pipx
-# and exposes them on PATH via ~/.local/bin.
-echo "### Installing pipx apps ###"
-pipx install yt-dlp
-# pipx exposes apps in ~/.local/bin, which the script's own
-# non-interactive PATH won't include (that export lives in the
-# dotfiles' .zshrc), so verify by file, not `command -v`.
-for app in yt-dlp; do
-  if [ ! -x "$HOME/.local/bin/$app" ]; then
-    echo "    Missing pipx app: $app" >&2
-    exit 1
-  fi
-done
+# uv (from brew above) installs each tool into its own venv and
+# links the binary into ~/.local/bin. Guarded so a re-run doesn't
+# hit the network: uv errors if the tool is already installed.
+echo "### Installing uv tools ###"
+if ! uv tool list 2>/dev/null | grep -q '^yt-dlp'; then
+  uv tool install yt-dlp
+fi
+# ~/.local/bin is added to PATH only by the dotfiles' .zshrc in an
+# interactive shell, so this script's non-interactive shell can't
+# `command -v` the tool. Verify the linked binary directly instead.
+if [ ! -x "$HOME/.local/bin/yt-dlp" ]; then
+  echo "    Missing uv tool: yt-dlp" >&2
+  exit 1
+fi
 
 # ------------------------------------------------------------
 # 7. 1Password SSH agent (the GitHub credential)
 # ------------------------------------------------------------
 # Like the VPS flow, this Mac keeps no GitHub key of its own: the
-# operator's 1Password key signs the dotfiles clone (ADR-0006).
+# operator's 1Password key signs the dotfiles clone. The Mac
+# credential policy is in GLOSSARY.md.
 # 1Password's agent listens on a socket inside the app's group
 # container; ~/.config/1password/agent.sock is a stable short path to
 # it, and ~/.ssh/config points IdentityAgent at that path. A
@@ -671,16 +671,15 @@ if [ -d "$ZSH_DIR" ]; then
 else
   echo "    MISSING oh-my-zsh" >&2
 fi
-# pipx apps live in ~/.local/bin, which is added to PATH only by
+# uv tools live in ~/.local/bin, which is added to PATH only by
 # the dotfiles' .zshrc in an interactive shell.
 for app in yt-dlp; do
   if [ -x "$HOME/.local/bin/$app" ]; then
-    echo "    OK  $app (pipx)"
+    echo "    OK  $app (uv)"
   else
     echo "    MISSING $app" >&2
   fi
 done
-
 echo ""
 echo "### New Mac setup done. Open a new Terminal window to start using zsh. ###"
 echo "    blackhole-2ch installs a virtual audio device; reboot before using it."
