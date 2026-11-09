@@ -121,7 +121,7 @@ The Mac flow is **zsh, not bash**. A fresh Mac's `/bin/zsh` is always a recent 5
 **What it does**, in order. The first step is a preflight that asserts the three prerequisites above, so a missing one stops the script immediately rather than after it installs a batch of packages.
 
 1. **Shell env:** oh-my-zsh (unattended), the custom plugins it doesn't bundle (zsh-completions, zsh-autosuggestions, you-should-use, fast-syntax-highlighting), and the starship prompt. zsh is already the default on macOS, so no `chsh` is needed.
-2. **Brew formulae:** `neovim bat ripgrep fd lf yadm` (the VPS core) plus `git gh lazygit git-delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm starship zoxide zig go just just-lsp imagemagick`. `git` upgrades the CLT's older build, and macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
+2. **Brew formulae:** `neovim bat ripgrep fd lf yadm` (the VPS core) plus `git gh git-delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm starship zoxide zig go just just-lsp imagemagick`. `git` upgrades the CLT's older build, and macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
 3. **Brew casks:** `font-caskaydia-cove-nerd-font font-geist-mono-nerd-font keycastr`. The fonts install per-user and keycastr is an app, so this batch needs no password.
 4. **Neovim:** vim-plug, plus the undodir `init.vim` expects.
 5. **Node via fnm:** installed through Homebrew, latest LTS made the default.

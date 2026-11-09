@@ -195,7 +195,6 @@ FORMULAS=(
   yadm
   git
   gh
-  lazygit
   git-delta
   jq
   uv
@@ -224,7 +223,7 @@ brew install "${FORMULAS[@]}"
 # the `delta` binary, imagemagick ships `magick`.
 echo "### Verifying installed commands ###"
 MISSING=""
-for cmd in nvim bat rg fd lf yadm git gh lazygit delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm starship zoxide zig go just just-lsp magick; do
+for cmd in nvim bat rg fd lf yadm git gh delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm starship zoxide zig go just just-lsp magick; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "    Missing command: $cmd" >&2
     MISSING="$MISSING $cmd"
