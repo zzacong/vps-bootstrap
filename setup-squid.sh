@@ -8,21 +8,21 @@
 #   bash setup-squid.sh
 #
 # Env overrides for unattended / repeat testing:
-#   SQUID_IP=1.2.3.4 SQUID_USER=foo SQUID_PASS=bar \
-#     SKIP_INSTALL=1 bash setup-squid.sh
+#   SKIP_INSTALL=1 bash setup-squid.sh
 #
-#   SQUID_IP      -> IP allowed without login (default: your SSH
-#                    client IP)
-#   SQUID_USER    -> proxy username (prompted if unset)
-#   SQUID_PASS    -> proxy password (prompted if unset)
-#   SKIP_INSTALL  -> 1 to skip apt install / systemctl enable
+#   SKIP_INSTALL -> 1 to skip apt install / systemctl enable
+#
+# There are no credential prompts and no env vars for one: the
+# proxy is gated on the tailnet (Tailscale's 100.64.0.0/10), not
+# on a username and password. Run setup-user.sh (or the Tailscale
+# installer, then `sudo tailscale up`) if the node is not on the
+# tailnet yet -- otherwise the rules below match nobody.
 # ============================================================
 
 set -euo pipefail
 
 SKIP_INSTALL="${SKIP_INSTALL:-0}"
 SQUID_CONF="/etc/squid/squid.conf"
-SQUID_PASSWORDS="/etc/squid/passwords"
 # Rules live in their own file rather than in squid.conf: stock
 # squid.conf includes this directory before its `http_access deny
 # all`, so the rules still apply, and squid's conffile stays
@@ -51,7 +51,7 @@ if [ "$SKIP_INSTALL" != "1" ]; then
   if ! command -v squid >/dev/null 2>&1; then
     echo "### Installing Squid proxy ###"
     sudo apt-get update
-    sudo apt-get install -y squid apache2-utils
+    sudo apt-get install -y squid
   else
     echo "### squid already installed, skipping install ###"
   fi
@@ -64,88 +64,28 @@ if [ ! -f "$SQUID_CONF" ]; then
 fi
 
 # ------------------------------------------------------------
-# 2. Gather the allowed IP and the proxy credentials
+# 2. Build the rules: tailnet sources in, everything else out.
+#    A logged-out Tailscale node means no source in 100.64.0.0/10,
+#    so the proxy denies everyone -- the failure direction is
+#    closed, not open.
 # ------------------------------------------------------------
-SSH_CLIENT_IP="${SSH_CLIENT:-}"
-SSH_CLIENT_IP="${SSH_CLIENT_IP%% *}"
-if [ -z "${SQUID_IP:-}" ]; then
-  read -rp "    IP allowed without login [${SSH_CLIENT_IP:-none}]: " SQUID_IP || true
-fi
-SQUID_IP="${SQUID_IP:-$SSH_CLIENT_IP}"
-
-if [ -n "$SQUID_IP" ]; then
-  if ! python3 -c 'import ipaddress, sys; ipaddress.ip_address(sys.argv[1])' "$SQUID_IP" 2>/dev/null; then
-    echo "    Invalid IP address: $SQUID_IP" >&2
-    exit 1
-  fi
-fi
-
-if [ -z "${SQUID_USER:-}" ]; then
-  read -rp "    Proxy username: " SQUID_USER || true
-fi
-if [ -z "$SQUID_USER" ]; then
-  echo "    A proxy username is required." >&2
-  exit 1
-fi
-if [ -z "${SQUID_PASS:-}" ]; then
-  read -rsp "    Proxy password: " SQUID_PASS || true
-  echo
-  read -rsp "    Confirm proxy password: " SQUID_PASS_CONFIRM || true
-  echo
-  if [ -z "$SQUID_PASS" ] || [[ "$SQUID_PASS" != "$SQUID_PASS_CONFIRM" ]]; then
-    echo "    Proxy password empty or does not match." >&2
-    exit 1
-  fi
-fi
-
-# ------------------------------------------------------------
-# 3. Write the htpasswd-format password file. The password is
-#    fed on stdin (twice, as htpasswd asks for it twice) so it
-#    never shows up on the command line.
-# ------------------------------------------------------------
-if [ -f "$SQUID_PASSWORDS" ]; then
-  if sudo grep -q "^${SQUID_USER}:" "$SQUID_PASSWORDS"; then
-    echo "    Password file exists and user $SQUID_USER is present; keeping it."
-  else
-    echo "    Password file exists but has no $SQUID_USER; adding the user."
-    printf '%s\n%s\n' "$SQUID_PASS" "$SQUID_PASS" \
-      | sudo htpasswd "$SQUID_PASSWORDS" "$SQUID_USER"
-    sudo chown root:proxy "$SQUID_PASSWORDS"
-    sudo chmod 640 "$SQUID_PASSWORDS"
-  fi
-else
-  printf '%s\n%s\n' "$SQUID_PASS" "$SQUID_PASS" \
-    | sudo htpasswd -c "$SQUID_PASSWORDS" "$SQUID_USER"
-  sudo chown root:proxy "$SQUID_PASSWORDS"
-  sudo chmod 640 "$SQUID_PASSWORDS"
-  echo "    Wrote $SQUID_PASSWORDS for user $SQUID_USER."
-fi
-
-# ------------------------------------------------------------
-# 4. Build the auth/allow rules block. The IP rule is only
-#    emitted when an IP was actually given.
-# ------------------------------------------------------------
-IP_RULES=""
-if [ -n "$SQUID_IP" ]; then
-  IP_RULES="acl allowed_ip src ${SQUID_IP}
-http_access allow allowed_ip"
-fi
-SQUID_AUTH_RULES=$(cat <<EOF
+SQUID_RULES=$(cat <<EOF
 # Written by vps-bootstrap (setup-user.sh / setup-squid.sh), which
 # rewrites this file on every run. It lives here instead of in
 # squid.conf so the packaged conffile stays unmodified.
-auth_param basic program /usr/lib/squid/basic_ncsa_auth $SQUID_PASSWORDS
-auth_param basic children 5
-auth_param basic credentialsttl 2 hours
-auth_param basic realm Squid Proxy
-${IP_RULES}
-acl auth_users proxy_auth REQUIRED
-http_access allow auth_users
+#
+# Only your tailnet may use this proxy. 100.64.0.0/10 is the range
+# Tailscale assigns, so this names every device on your tailnet and
+# nothing on the public internet. It says nothing about WHICH
+# tailnet, which is fine: ufw only admits these peers over
+# tailscale0, so the packets are already authenticated WireGuard.
+acl tailnet src 100.64.0.0/10
+http_access allow tailnet
 EOF
 )
 
 # ------------------------------------------------------------
-# 5. Write the rules file. squid.conf is only read, never edited,
+# 3. Write the rules file. squid.conf is only read, never edited,
 #    so it stays a pristine conffile.
 # ------------------------------------------------------------
 # The include line is what makes the rules file live. Stock
@@ -167,14 +107,14 @@ if [ -f "$SQUID_RULES_FILE" ]; then
   sudo cp "$SQUID_RULES_FILE" "/etc/squid/20-vps-bootstrap.conf.bak.$(date +%s)"
 fi
 SQUID_RULES_TMP="$(mktemp)"
-printf '%s\n' "$SQUID_AUTH_RULES" > "$SQUID_RULES_TMP"
+printf '%s\n' "$SQUID_RULES" > "$SQUID_RULES_TMP"
 sudo install -m 0644 -o root -g root "$SQUID_RULES_TMP" "$SQUID_RULES_FILE"
 rm -f "$SQUID_RULES_TMP"
 
 cat "$SQUID_RULES_FILE"
 
 # ------------------------------------------------------------
-# 6. Parse-validate the config before restarting the daemon.
+# 4. Parse-validate the config before restarting the daemon.
 #    `squid -k parse` prints the real reason on failure, so it
 #    is not suppressed.
 # ------------------------------------------------------------
@@ -185,15 +125,27 @@ fi
 sudo systemctl restart squid
 
 # ------------------------------------------------------------
-# 7. If UFW is active, open 3128.
+# 5. Report how 3128 is reachable. It needs no rule of its own:
+#    setup-user.sh's firewall section allows the whole tailscale0
+#    interface. Without that firewall the port is open to the
+#    internet and the tailnet ACL is the only thing answering.
 # ------------------------------------------------------------
 if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
-  echo "    UFW is active; opening port 3128."
-  sudo ufw allow 3128/tcp
+  echo "    UFW is active; 3128 is reachable only over tailscale0."
+else
+  echo "    NOTE: UFW is not active, so port 3128 is reachable from the internet."
+  echo "          Only the tailnet ACL protects it (everything else gets 403)."
+  echo "          Re-run with the firewall, or restrict 3128 yourself."
 fi
 
 echo "    Squid configured and running."
 echo "    Config: $SQUID_RULES_FILE (included from $SQUID_CONF)"
-echo "    Port: 3128"
-echo "    Allowed IP: ${SQUID_IP:-none (password auth only)}"
-echo "    Proxy user: $SQUID_USER"
+echo "    Port: 3128, tailnet only"
+if command -v tailscale >/dev/null 2>&1; then
+  TAILSCALE_IP="$(sudo tailscale ip -4 2>/dev/null | head -n1 || true)"
+  if [ -n "$TAILSCALE_IP" ]; then
+    echo "    Tailnet address: $TAILSCALE_IP (proxy: http://$TAILSCALE_IP:3128)"
+  else
+    echo "    Tailscale is installed but not logged in; run 'sudo tailscale up'."
+  fi
+fi
