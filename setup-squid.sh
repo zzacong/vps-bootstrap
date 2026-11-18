@@ -9,23 +9,26 @@
 #
 # Env overrides for unattended / repeat testing:
 #   SQUID_IP=1.2.3.4 SQUID_USER=foo SQUID_PASS=bar \
-#     SKIP_INSTALL=1 FORCE=1 bash setup-squid.sh
+#     SKIP_INSTALL=1 bash setup-squid.sh
 #
 #   SQUID_IP      -> IP allowed without login (default: your SSH
 #                    client IP)
 #   SQUID_USER    -> proxy username (prompted if unset)
 #   SQUID_PASS    -> proxy password (prompted if unset)
 #   SKIP_INSTALL  -> 1 to skip apt install / systemctl enable
-#   FORCE         -> 1 to rewrite the rules block even if it is
-#                    already present
 # ============================================================
 
 set -euo pipefail
 
 SKIP_INSTALL="${SKIP_INSTALL:-0}"
-FORCE="${FORCE:-0}"
 SQUID_CONF="/etc/squid/squid.conf"
 SQUID_PASSWORDS="/etc/squid/passwords"
+# Rules live in their own file rather than in squid.conf: stock
+# squid.conf includes this directory before its `http_access deny
+# all`, so the rules still apply, and squid's conffile stays
+# unmodified, which is what stops `apt upgrade` prompting about it.
+SQUID_CONF_DIR="/etc/squid/conf.d"
+SQUID_RULES_FILE="$SQUID_CONF_DIR/20-vps-bootstrap.conf"
 
 # Same guard as setup-user.sh: this must run as the new user,
 # not root, so sudo prompts work with the user's own account.
@@ -53,6 +56,11 @@ if [ "$SKIP_INSTALL" != "1" ]; then
     echo "### squid already installed, skipping install ###"
   fi
   sudo systemctl enable --now squid
+fi
+
+if [ ! -f "$SQUID_CONF" ]; then
+  echo "$SQUID_CONF is missing; install squid first (or drop SKIP_INSTALL=1)." >&2
+  exit 1
 fi
 
 # ------------------------------------------------------------
@@ -123,7 +131,9 @@ if [ -n "$SQUID_IP" ]; then
 http_access allow allowed_ip"
 fi
 SQUID_AUTH_RULES=$(cat <<EOF
-# --- Added by setup-squid.sh ---
+# Written by vps-bootstrap (setup-user.sh / setup-squid.sh), which
+# rewrites this file on every run. It lives here instead of in
+# squid.conf so the packaged conffile stays unmodified.
 auth_param basic program /usr/lib/squid/basic_ncsa_auth $SQUID_PASSWORDS
 auth_param basic children 5
 auth_param basic credentialsttl 2 hours
@@ -135,46 +145,33 @@ EOF
 )
 
 # ------------------------------------------------------------
-# 5. Insert the rules before the default `http_access deny all`
-#    anchor. The anchor search must not kill the script under
-#    `set -e` when grep finds nothing -- hence the `|| true` --
-#    so the missing-anchor guard below actually runs.
+# 5. Write the rules file. squid.conf is only read, never edited,
+#    so it stays a pristine conffile.
 # ------------------------------------------------------------
-# The stock squid.conf is the full documented file and contains
-# commented `##auth_param basic program ...` and possibly
-# `##acl auth_users ...` example lines, so grep'ing for either
-# would falsely report "already done" and skip writing. Anchor
-# the marker at column 0 so only the active generated line
-# matches.
-if ! grep -q "^acl auth_users proxy_auth REQUIRED" "$SQUID_CONF" || [ "$FORCE" = "1" ]; then
-  echo "### Updating $SQUID_CONF ###"
-  DENY_LINE=$(grep -n '^http_access deny all$' "$SQUID_CONF" | head -n1 | cut -d: -f1 || true)
-  if [ -z "$DENY_LINE" ]; then
-    echo "    Could not locate Squid's 'http_access deny all' anchor; refusing to edit." >&2
-    echo "    Existing http_access lines in $SQUID_CONF:" >&2
-    grep -n '^http_access' "$SQUID_CONF" >&2 || echo "    (none)" >&2
-    exit 1
-  fi
-  echo "    Anchor 'http_access deny all' found at line $DENY_LINE."
-
-  sudo cp "$SQUID_CONF" "$SQUID_CONF.bak.$(date +%s)"
-  SQUID_BLOCK_FILE="$(mktemp)"
-  SQUID_NEW_CONF="$(mktemp)"
-  printf '%s\n' "$SQUID_AUTH_RULES" > "$SQUID_BLOCK_FILE"
-  {
-    sed -n "1,$((DENY_LINE - 1))p" "$SQUID_CONF"
-    cat "$SQUID_BLOCK_FILE"
-    sed -n "${DENY_LINE},\$p" "$SQUID_CONF"
-  } > "$SQUID_NEW_CONF"
-  sudo install -m 0644 -o root -g root "$SQUID_NEW_CONF" "$SQUID_CONF"
-  rm -f "$SQUID_BLOCK_FILE" "$SQUID_NEW_CONF"
-  echo "    Updated $SQUID_CONF (backup kept)."
-
-  echo "    Resulting squid access rules:"
-  grep -nE '^(http_access|auth_param|acl (auth_users|allowed_ip))' "$SQUID_CONF"
-else
-  echo "    Config already contains auth rules, skipping."
+# The include line is what makes the rules file live. Stock
+# squid.conf ships it uncommented; if it is gone the rules would be
+# silently ignored, which is worse than not writing them, so refuse
+# instead of guessing.
+if ! grep -qE "^include[[:space:]]+${SQUID_CONF_DIR}/" "$SQUID_CONF"; then
+  echo "    $SQUID_CONF does not include $SQUID_CONF_DIR/; refusing to write rules squid would ignore." >&2
+  echo "    Add 'include $SQUID_CONF_DIR/*.conf' above 'http_access deny all' and re-run." >&2
+  exit 1
 fi
+
+# This file belongs to the scripts, so a re-run replaces it. The
+# previous copy is kept beside squid.conf's own backups, outside
+# conf.d so it can never be picked up by the include glob.
+echo "### Writing $SQUID_RULES_FILE ###"
+sudo install -d -m 0755 -o root -g root "$SQUID_CONF_DIR"
+if [ -f "$SQUID_RULES_FILE" ]; then
+  sudo cp "$SQUID_RULES_FILE" "/etc/squid/20-vps-bootstrap.conf.bak.$(date +%s)"
+fi
+SQUID_RULES_TMP="$(mktemp)"
+printf '%s\n' "$SQUID_AUTH_RULES" > "$SQUID_RULES_TMP"
+sudo install -m 0644 -o root -g root "$SQUID_RULES_TMP" "$SQUID_RULES_FILE"
+rm -f "$SQUID_RULES_TMP"
+
+cat "$SQUID_RULES_FILE"
 
 # ------------------------------------------------------------
 # 6. Parse-validate the config before restarting the daemon.
@@ -182,7 +179,7 @@ fi
 #    is not suppressed.
 # ------------------------------------------------------------
 if ! sudo squid -k parse; then
-  echo "    Invalid Squid configuration; NOT restarting squid. Check $SQUID_CONF." >&2
+  echo "    Invalid Squid configuration; NOT restarting squid. Check $SQUID_RULES_FILE." >&2
   exit 1
 fi
 sudo systemctl restart squid
@@ -196,7 +193,7 @@ if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | grep -q "Stat
 fi
 
 echo "    Squid configured and running."
-echo "    Config: $SQUID_CONF"
+echo "    Config: $SQUID_RULES_FILE (included from $SQUID_CONF)"
 echo "    Port: 3128"
 echo "    Allowed IP: ${SQUID_IP:-none (password auth only)}"
 echo "    Proxy user: $SQUID_USER"

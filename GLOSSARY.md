@@ -34,4 +34,6 @@ Use these terms in scripts, comments, and docs, and avoid the synonyms noted wit
 
 **Hardening drop-in**: `/etc/ssh/sshd_config.d/50-hardening.conf`.
 
+**Squid rules file**: `/etc/squid/conf.d/20-vps-bootstrap.conf`. Squid's own `squid.conf` is a packaged conffile and is never edited, so `apt upgrade` never asks about it.
+
 **Mac credential policy**: neither flow keeps a GitHub key of its own. The 1Password agent is the only credential.
