@@ -163,4 +163,3 @@ zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/mai
 | `setup-squid.sh` | Standalone extract of setup-user.sh's optional Squid section, for re-running/fixing just the proxy config |
 | `setup-mac.sh` | Mac — shell, brew formulae and casks, fnm/Node, rustup, uv tools, 1Password agent, base git config, pnpm globals, dotfiles (as the user). Prerequisites: CLT, Homebrew, 1Password |
 | `setup-github-hosts.sh` | Mac — optional wizard that adds GitHub SSH host aliases to `~/.ssh/config` (run by `setup-mac.sh` or on its own) |
-| `GLOSSARY.md` | Shared vocabulary for the scripts (host key, forwarded agent, shell startup file, …) |

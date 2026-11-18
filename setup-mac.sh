@@ -337,8 +337,7 @@ fi
 # 7. 1Password SSH agent (the GitHub credential)
 # ------------------------------------------------------------
 # Like the VPS flow, this Mac keeps no GitHub key of its own: the
-# operator's 1Password key signs the dotfiles clone. The Mac
-# credential policy is in GLOSSARY.md.
+# operator's 1Password key signs the dotfiles clone.
 # 1Password's agent listens on a socket inside the app's group
 # container; ~/.config/1password/agent.sock is a stable short path to
 # it, and ~/.ssh/config points IdentityAgent at that path. A
