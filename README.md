@@ -1,6 +1,6 @@
 # Machine Bootstrap
 
-Two provisioning flows, both converging on the same shell (zsh + oh-my-zsh + starship), editor (neovim + vim-plug), Node (fnm), and yadm-managed dotfiles:
+Two provisioning flows. Both install **fish** as the shell you type into, the same editor (neovim + vim-plug), Node (fnm), and yadm-managed dotfiles. They differ on the **login shell**, which the bootstrap never changes: zsh on macOS, bash on Ubuntu.
 
 - **[VPS flow](#vps-flow)** — a fresh Ubuntu VPS (24.04+), three scripts in order.
 - **[Mac flow](#mac-flow)** — a new MacBook, one script after three manual prerequisites.
@@ -16,7 +16,7 @@ setup-root.sh  →  setup-ssh.sh  →  setup-user.sh
 (as root)         (as root)         (as the new user)
 ```
 
-The whole thing is idempotent-ish and safe to re-run: everything checks before it changes, and the risky steps (turning off password SSH, cloning dotfiles over your shell files) are gated behind a confirmation and backed up first.
+The whole thing is idempotent-ish and safe to re-run: everything checks before it changes, and the risky steps (turning off password SSH, cloning dotfiles over your shell startup files) are gated behind a confirmation and backed up first.
 
 Each step fetches the script with `bash -c "$(curl -fsSL <url>)"`. That form keeps your terminal as the script's stdin, so the interactive prompts (usernames, SSH keys, passphrases, confirmations) work normally — unlike `curl … | bash`, where the prompts would read from the pipe instead.
 
@@ -24,7 +24,7 @@ Each step fetches the script with `bash -c "$(curl -fsSL <url>)"`. That form kee
 
 - A sudo-capable **new user** (default `zacong`) as your only login on the box
 - Key-only SSH: your 1Password **host key** for logging in, forwarded to the box for the dotfiles clone — no private keys ever live on the server
-- **zsh + oh-my-zsh** with autosuggestions, syntax highlighting, and the starship prompt
+- **fish** as the interactive shell, with the **starship** prompt. The login shell is left alone: zsh + oh-my-zsh on the Mac, stock bash on Ubuntu — and an Ubuntu SSH login hands straight over to fish
 - **neovim** with vim-plug (plugins come from your dotfiles), **fd**, **bat**, **ripgrep**, **lf**, **yadm**
 - **Node** (latest LTS) via **fnm**, with **pnpm** (brew on Mac, `npm i -g` on Linux)
 - Optionally: UFW firewall and a Squid proxy
@@ -74,15 +74,14 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/ma
 
 **What it does**, roughly in order:
 
-1. **System packages** — `zsh neovim fd-find bat ripgrep lf yadm git curl lsof unzip python3` via sudo (you'll be asked for your password on the first sudo). Optionally a full `apt upgrade` first.
-2. **Shell env** — oh-my-zsh (unattended), the custom plugins it doesn't bundle (zsh-completions, zsh-autosuggestions, you-should-use, fast-syntax-highlighting), zoxide, starship prompt (installed via its official script).
+1. **System packages** — `fish neovim fd-find bat ripgrep lf yadm git curl lsof unzip python3` via sudo (you'll be asked for your password on the first sudo). Optionally a full `apt upgrade` first.
+2. **Shell tools** — zoxide and the starship prompt (both via their official scripts), plus two marker-delimited startup blocks: the **fish hand-off** in `~/.bash_profile` (interactive logins `exec` fish, so SSH lands in fish while `ssh host cmd` stays bash) and the **bash env block** in `~/.bashrc` (puts `~/.local/bin` on `PATH` and runs `fnm env`, so node works when you drop into bash). fish itself comes with the packages above; its config is in the dotfiles.
 3. **Neovim** — vim-plug, plus symlinks `fdfind`→`fd` and `batcat`→`bat` (Ubuntu renames both even on 24.04).
 4. **Node via fnm** — latest LTS, made the default.
-5. **zsh as the default shell** — via `chsh`.
-6. **Dotfiles (yadm bootstrap)** — backs up the **skel defaults** (`~/.zshrc`, `~/.bashrc`, …) into `~/.bootstrap-backup-*` rather than deleting them, so a failed clone leaves a usable shell. Verifies the **forwarded agent** (`$SSH_AUTH_SOCK` set, keys visible) and that GitHub accepts it as the account owning the dotfiles (never starts a local ssh-agent — that would hide the forwarded one), pre-seeds GitHub's pinned host key, then `yadm clone`s your dotfiles. Finally runs vim-plug against your `init.vim`.
-7. **sshd hardening (the last mandatory step)** — writes the **hardening drop-in** `/etc/ssh/sshd_config.d/50-hardening.conf` (`PermitRootLogin no`, `PasswordAuthentication no`, key-only, `AllowUsers` scoped to you). It refuses to run if there's no key in `authorized_keys`, asks you to confirm key login works from a *second terminal*, validates with `sshd -t` before reloading, and handles socket-activated sshd.
-8. **(Optional) UFW firewall** — deny incoming by default, allow outgoing; SSH always allowed first, optionally ports 80/443.
-9. **(Optional) Squid proxy** — caching HTTP(S) proxy on port 3128, locked down with an htpasswd file (and optionally one whitelisted IP). Config is parse-validated before restart and inserted before Squid's default `deny all`. Available standalone as `setup-squid.sh` if you want to re-run or fix just the proxy config without redoing step 3.
+5. **Dotfiles (yadm bootstrap)** — backs up the **shell startup files** (`~/.config/fish/config.fish`) into `~/.bootstrap-backup-*` rather than deleting them, so a failed clone leaves a usable shell. Verifies the **forwarded agent** (`$SSH_AUTH_SOCK` set, keys visible) and that GitHub accepts it as the account owning the dotfiles (never starts a local ssh-agent — that would hide the forwarded one), pre-seeds GitHub's pinned host key, then `yadm clone`s your dotfiles. Finally runs vim-plug against your `init.vim`.
+6. **sshd hardening (the last mandatory step)** — writes the **hardening drop-in** `/etc/ssh/sshd_config.d/50-hardening.conf` (`PermitRootLogin no`, `PasswordAuthentication no`, key-only, `AllowUsers` scoped to you). It refuses to run if there's no key in `authorized_keys`, asks you to confirm key login works from a *second terminal*, validates with `sshd -t` before reloading, and handles socket-activated sshd.
+7. **(Optional) UFW firewall** — deny incoming by default, allow outgoing; SSH always allowed first, optionally ports 80/443.
+8. **(Optional) Squid proxy** — caching HTTP(S) proxy on port 3128, locked down with an htpasswd file (and optionally one whitelisted IP). Config is parse-validated before restart and inserted before Squid's default `deny all`. Available standalone as `setup-squid.sh` if you want to re-run or fix just the proxy config without redoing step 3.
 
 If a reboot is pending (kernel update), it tells you.
 
@@ -106,7 +105,7 @@ Click Install in the dialog and wait for it to finish.
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 
-If the installer tells you to add a `shellenv` line to your shell profile, put that line in your dotfiles, not `~/.zprofile`. The script moves the shell files Homebrew wrote aside when it clones the dotfiles, so a line left in `~/.zprofile` disappears.
+If the installer tells you to add a `shellenv` line to your shell profile, put that line in your dotfiles. The dotfiles are what carry your shell config — Ghostty starts fish from their config, zsh reads their `.zshrc` — and nothing here tracks `~/.zprofile`, so a line left there is not restored anywhere.
 
 **3. 1Password.** Install and sign in, turn on **Settings → Developer → SSH agent**, and make sure the key's public half is already on the GitHub account that owns the dotfiles. The script keeps no GitHub key of its own, so this is its only credential.
 
@@ -120,15 +119,15 @@ The Mac flow is **zsh, not bash**. A fresh Mac's `/bin/zsh` is always a recent 5
 
 **What it does**, in order. The first step is a preflight that asserts the three prerequisites above, so a missing one stops the script immediately rather than after it installs a batch of packages.
 
-1. **Shell env:** oh-my-zsh (unattended), the custom plugins it doesn't bundle (zsh-completions, zsh-autosuggestions, you-should-use, fast-syntax-highlighting), and the starship prompt. zsh is already the default on macOS, so no `chsh` is needed.
-2. **Brew formulae:** `neovim bat ripgrep fd lf yadm` (the VPS core) plus `git gh git-delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm starship zoxide zig go just just-lsp imagemagick`. `git` upgrades the CLT's older build, and macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks.
+1. **zsh login shell:** oh-my-zsh (unattended) plus the two plugins it doesn't bundle (`zsh-autosuggestions`, `fast-syntax-highlighting`). zsh is already the default on macOS and is never changed, so there's no `chsh` — the login shell stays a usable fallback for SSH into the Mac and for `zsh -c`.
+2. **Brew formulae:** `neovim bat ripgrep fd lf yadm` (the VPS core) plus `git gh git-delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm fish starship zoxide zig go just just-lsp imagemagick`. `git` upgrades the CLT's older build, and macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks. `fish` is the shell Ghostty starts; the dotfiles config it.
 3. **Brew casks:** `font-caskaydia-cove-nerd-font font-geist-mono-nerd-font keycastr`. The fonts install per-user and keycastr is an app, so this batch needs no password.
 4. **Neovim:** vim-plug, plus the undodir `init.vim` expects.
 5. **Node via fnm:** installed through Homebrew, latest LTS made the default.
-6. **Rust via rustup:** the official installer, run with `--no-modify-path` so it doesn't edit shell files. rustup still writes `~/.cargo/env`, which the dotfiles' `.zshrc` already sources.
+6. **Rust via rustup:** the official installer, run with `--no-modify-path` so it doesn't edit shell files. rustup still writes `~/.cargo/env`; the dotfiles' `.zshrc` sources it, and the fish config puts `~/.cargo/bin` on `PATH`.
 7. **uv tools:** `yt-dlp`, in its own venv. `uv` is already on PATH from the brew batch, and the tool links into `~/.local/bin`.
 8. **1Password SSH agent:** links `~/.config/1password/agent.sock` to the agent socket in 1Password's group container and writes `~/.ssh/config` with `IdentityAgent ~/.config/1password/agent.sock`. No key is generated on the Mac.
-9. **Dotfiles (yadm bootstrap):** backs up the shell files the tools wrote, pre-seeds GitHub's pinned host key, proves the agent authenticates to GitHub, then `yadm clone`s your dotfiles.
+9. **Dotfiles (yadm bootstrap):** backs up the shell startup files the tools wrote, pre-seeds GitHub's pinned host key, proves the agent authenticates to GitHub, then `yadm clone`s your dotfiles.
 10. **Git config:** sets `user.name`, `user.email`, delta as the pager, and `merge.conflictStyle = zdiff3`. These layer on top of the dotfiles' `.gitconfig`, so a tracked one there stays the base.
 11. **pnpm global CLIs:** `@earendil-works/pi-coding-agent @zzacong/fleet agent-browser ccusage skills vercel`. This runs after the clone so a `~/.npmrc` from the dotfiles is available to private scoped packages. pnpm 10+ blocks dependency build scripts by default, so the install passes `--allow-build` for the four that have one — `agent-browser`'s postinstall downloads its native binary, and skipping it leaves the install without one.
 12. **Neovim plugins:** runs vim-plug against the `init.vim` the clone brought in.
@@ -151,7 +150,7 @@ zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/mai
 
 - **This repo is only the bootstrap.** Your shell, editor, aliases, and git config are not here — they're in `zzacong/dotfiles`, managed by yadm on the box (`yadm status`, `yadm push`). This repo is what you'd run on the *next* fresh VPS.
 - **Don't skip steps.** Step 3 needs your 1Password agent forwarded (`ssh -A`) with its key already on the GitHub account owning the dotfiles — the pre-clone check fails fast otherwise. The scripts prompt and validate rather than assuming.
-- **Anything you change on a box** (zshrc tweaks, new aliases, nvim plugins) belongs in the dotfiles repo, not here.
+- **Anything you change on a box** (fish config tweaks, new aliases, nvim plugins) belongs in the dotfiles repo, not here.
 - Re-running any step is safe; the guardrails (validation, backups, second-terminal confirmations) exist so a mistake can't lock you out of the box.
 
 ## Repository layout
@@ -164,4 +163,4 @@ zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/mai
 | `setup-squid.sh` | Standalone extract of setup-user.sh's optional Squid section, for re-running/fixing just the proxy config |
 | `setup-mac.sh` | Mac — shell, brew formulae and casks, fnm/Node, rustup, uv tools, 1Password agent, base git config, pnpm globals, dotfiles (as the user). Prerequisites: CLT, Homebrew, 1Password |
 | `setup-github-hosts.sh` | Mac — optional wizard that adds GitHub SSH host aliases to `~/.ssh/config` (run by `setup-mac.sh` or on its own) |
-| `GLOSSARY.md` | Shared vocabulary for the scripts (host key, forwarded agent, skel default, …) |
+| `GLOSSARY.md` | Shared vocabulary for the scripts (host key, forwarded agent, shell startup file, …) |
