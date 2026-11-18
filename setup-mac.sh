@@ -15,7 +15,7 @@
 # Run on a fresh MacBook, as the user you'll use day-to-day:
 #   zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/main/setup-mac.sh)"
 #
-# Installs the shell env (zsh + oh-my-zsh + plugins + starship),
+# Installs fish, the zsh login shell (oh-my-zsh + two plugins),
 # brew formulae and casks, Node via fnm, Rust via rustup, uv
 # tools, and then yadm-clones the dotfiles.
 #
@@ -117,8 +117,15 @@ if [ ! -d "$(dirname "$OP_AGENT_TARGET")" ]; then
 fi
 
 # ------------------------------------------------------------
-# 1. Shell environment: oh-my-zsh + plugins + starship
+# 1. zsh login shell: oh-my-zsh + plugins
 # ------------------------------------------------------------
+# fish is the shell you actually type into; it comes from the brew
+# formulae in step 2, and the dotfiles' fish config is what starts
+# it. This section sets up the login shell instead. macOS keeps zsh
+# as that, and it still earns its keep: SSH into the Mac and
+# `zsh -c` both land in zsh, and the dotfiles' .zshrc is what makes
+# that usable.
+#
 # --unattended skips the interactive prompts and does NOT change
 # the default shell (zsh is already the default on macOS). The
 # installer hard-exits 1 if the target directory
@@ -149,23 +156,9 @@ fi
 # is re-runnable.
 ZSH_CUSTOM_DIR="${ZSH_CUSTOM:-$ZSH_DIR/custom}"
 
-echo "### Installing zsh-completions plugin ###"
-if [ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-completions" ]; then
-  git clone --depth=1 https://github.com/zsh-users/zsh-completions "$ZSH_CUSTOM_DIR/plugins/zsh-completions"
-else
-  echo "    Already cloned, skipping."
-fi
-
 echo "### Installing zsh-autosuggestions plugin ###"
 if [ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions" ]; then
   git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions"
-else
-  echo "    Already cloned, skipping."
-fi
-
-echo "### Installing zsh-you-should-use plugin ###"
-if [ ! -d "$ZSH_CUSTOM_DIR/plugins/you-should-use" ]; then
-  git clone --depth=1 https://github.com/MichaelAquilina/zsh-you-should-use "$ZSH_CUSTOM_DIR/plugins/you-should-use"
 else
   echo "    Already cloned, skipping."
 fi
@@ -207,6 +200,7 @@ FORMULAS=(
   oha
   pnpm
   fnm
+  fish
   starship
   zoxide
   zig
@@ -223,7 +217,7 @@ brew install "${FORMULAS[@]}"
 # the `delta` binary, imagemagick ships `magick`.
 echo "### Verifying installed commands ###"
 MISSING=""
-for cmd in nvim bat rg fd lf yadm git gh delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm starship zoxide zig go just just-lsp magick; do
+for cmd in nvim bat rg fd lf yadm git gh delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm fish starship zoxide zig go just just-lsp magick; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "    Missing command: $cmd" >&2
     MISSING="$MISSING $cmd"
@@ -462,18 +456,22 @@ if [ -d "$YADM_REPO_DIR" ]; then
     echo "    Pulled latest."
   fi
 else
-  # Only a fresh bootstrap needs this: oh-my-zsh and Homebrew wrote
-  # shell files (.zshrc, .zprofile) that would collide with (and
-  # block) the clone. Move them aside so yadm's versions win without
-  # destroying anything -- nothing is deleted, the originals stay in
-  # $BACKUP_DIR. On a re-run this block is skipped because the shell
-  # files are already yadm-managed (moving them would dirty the repo
-  # and leave you without a .zshrc).
-  echo "### Moving existing shell files out of the way (backed up) ###"
+  # Only a fresh bootstrap needs this, and only for the two shell
+  # startup files the dotfiles track: the oh-my-zsh installer wrote
+  # a ~/.zshrc, and a fish that ran before the clone left its own
+  # default config.fish. Those would collide with (and block) the
+  # clone, so move them aside -- nothing is deleted, the originals
+  # stay in $BACKUP_DIR. Files the dotfiles do not track (.profile,
+  # .bashrc, ...) are left alone: the clone would never replace
+  # them. On a re-run this block is skipped because both are already
+  # yadm-managed (moving them would dirty the repo and leave you
+  # without a ~/.zshrc).
+  echo "### Moving existing shell startup files out of the way (backed up) ###"
   BACKUP_DIR="$HOME/.bootstrap-backup-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$BACKUP_DIR"
-  for file in .zshrc .zprofile .zshenv .zlogin .bashrc .bash_profile .profile .bash_logout; do
+  for file in .zshrc .config/fish/config.fish; do
     if [ -e "$HOME/$file" ]; then
+      mkdir -p "$BACKUP_DIR/$(dirname "$file")"
       mv "$HOME/$file" "$BACKUP_DIR/$file"
     fi
   done
@@ -656,7 +654,7 @@ if [[ "$ADD_GITHUB_HOSTS" == [Yy]* ]]; then
 fi
 
 echo "### Final environment check ###"
-for cmd in zsh nvim fd bat rg lf yadm gh fnm node npm pnpm starship zoxide zig go cargo rustc; do
+for cmd in zsh nvim fd bat rg lf yadm gh fnm fish node npm pnpm starship zoxide zig go cargo rustc; do
   if command -v "$cmd" >/dev/null 2>&1; then
     echo "    OK  $cmd"
   else
@@ -671,7 +669,7 @@ else
   echo "    MISSING oh-my-zsh" >&2
 fi
 # uv tools live in ~/.local/bin, which is added to PATH only by
-# the dotfiles' .zshrc in an interactive shell.
+# the dotfiles' shell config (.zshrc, fish) in an interactive shell.
 for app in yt-dlp; do
   if [ -x "$HOME/.local/bin/$app" ]; then
     echo "    OK  $app (uv)"
@@ -680,8 +678,9 @@ for app in yt-dlp; do
   fi
 done
 echo ""
-echo "### New Mac setup done. Open a new Terminal window to start using zsh. ###"
+echo "### New Mac setup done. Open a new Terminal window to start using fish. ###"
+echo "    zsh stays the macOS login shell; SSH and 'zsh -c' still land there."
 echo "    blackhole-2ch installs a virtual audio device; reboot before using it."
 if [ -n "${BACKUP_DIR:-}" ]; then
-  echo "    Shell files backed up from the move-aside live in: $BACKUP_DIR"
+  echo "    Shell startup files backed up from the move-aside live in: $BACKUP_DIR"
 fi
