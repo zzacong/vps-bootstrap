@@ -5,7 +5,7 @@
 # key was set up by setup-ssh.sh):
 #   bash setup-user.sh
 #
-# Installs packages (via sudo), shell env, nvim, Node via fnm,
+# Installs packages (via sudo), fish, nvim, Node via fnm,
 # dotfiles, and optionally the firewall and a Squid proxy.
 # sshd hardening is the last mandatory step so your host
 # machine's SSH key is confirmed working before password auth
@@ -99,7 +99,7 @@ SUDO_KEEPALIVE_PID=$!
 # ------------------------------------------------------------
 # All plan questions live here so the rest of the script runs
 # without stopping. The sshd hardening confirmation stays in
-# section 7: it is a live safety check, not a plan choice.
+# section 6: it is a live safety check, not a plan choice.
 echo "### Configuration (asked up front, then runs unattended) ###"
 RUN_UPGRADE=""
 SETUP_UFW=""
@@ -174,7 +174,7 @@ echo "    squid: ${INSTALL_SQUID:-n}"
 #   fd-find / bat  -> Ubuntu still renames these to fdfind /
 #                     batcat even on 24.04 (handled in step 3)
 #   lf             -> available since Ubuntu 23.04
-#   lsof           -> used by the `runp` alias in ~/.zshrc
+#   lsof           -> used by the `runp` function in the fish config
 #   unzip          -> required by the fnm installer (step 4)
 #   python3        -> used to validate the optional Squid IP
 echo "### Updating apt packages ###"
@@ -186,15 +186,15 @@ if [[ "${RUN_UPGRADE,,}" =~ ^y(es)?$ ]]; then
   sudo apt-get upgrade -y
 fi
 
-echo "### Installing zsh, neovim, fd-find, bat, ripgrep, lf, yadm ###"
+echo "### Installing fish, neovim, fd-find, bat, ripgrep, lf, yadm ###"
 sudo apt-get install -y --no-install-recommends \
-  zsh neovim fd-find bat ripgrep lf yadm git curl lsof unzip python3
+  fish neovim fd-find bat ripgrep lf yadm git curl lsof unzip python3
 
 # Verify the packages actually landed (minimal images and future
 # releases can rename or drop them).
 echo "### Verifying installed commands ###"
 MISSING=""
-for command in zsh nvim fdfind batcat rg lf yadm git curl lsof unzip python3; do
+for command in fish nvim fdfind batcat rg lf yadm git curl lsof unzip python3; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "    Missing command: $command" >&2
     MISSING="$MISSING $command"
@@ -206,57 +206,20 @@ if [ -n "$MISSING" ]; then
 fi
 
 # ------------------------------------------------------------
-# 2. Shell environment: oh-my-zsh + plugins + zoxide + starship
+# 2. Shell tools: zoxide, starship, and the bash startup blocks
 # ------------------------------------------------------------
-# --unattended skips the interactive prompts and does NOT
-# change the default shell (we do that explicitly in step 5).
-echo "### Installing oh-my-zsh ###"
-ZSH_DIR="${ZDOTDIR:-$HOME}/.oh-my-zsh"
-if [ ! -d "$ZSH_DIR" ]; then
-  sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-else
-  echo "    Already installed, skipping."
-fi
-
-# The plugins that don't ship with oh-my-zsh are cloned into its
-# custom directory; oh-my-zsh loads any plugin there that the
-# .zshrc lists by name. --depth=1 keeps each clone shallow and
-# fast. Each clone is skipped if it already exists so the script
-# is re-runnable.
-ZSH_CUSTOM_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
-
-echo "### Installing zsh-completions plugin ###"
-if [ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-completions" ]; then
-  git clone --depth=1 https://github.com/zsh-users/zsh-completions "$ZSH_CUSTOM_DIR/plugins/zsh-completions"
-else
-  echo "    Already cloned, skipping."
-fi
-
-echo "### Installing zsh-autosuggestions plugin ###"
-if [ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions" ]; then
-  git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions"
-else
-  echo "    Already cloned, skipping."
-fi
-
-echo "### Installing zsh-you-should-use plugin ###"
-if [ ! -d "$ZSH_CUSTOM_DIR/plugins/you-should-use" ]; then
-  git clone --depth=1 https://github.com/MichaelAquilina/zsh-you-should-use "$ZSH_CUSTOM_DIR/plugins/you-should-use"
-else
-  echo "    Already cloned, skipping."
-fi
-
-echo "### Installing fast-syntax-highlighting plugin ###"
-if [ ! -d "$ZSH_CUSTOM_DIR/plugins/fast-syntax-highlighting" ]; then
-  git clone --depth=1 https://github.com/zdharma-continuum/fast-syntax-highlighting "$ZSH_CUSTOM_DIR/plugins/fast-syntax-highlighting"
-else
-  echo "    Already cloned, skipping."
-fi
+# fish is the shell you type into; it came with the packages in
+# step 1. The login shell stays bash -- Ubuntu's default -- so
+# nothing here runs chsh. Instead, marker-delimited blocks in
+# ~/.bash_profile (fish hand-off) and ~/.bashrc (bash env) set up
+# the two bash entry points, while `ssh host cmd` stays untouched.
+# zoxide and starship below are consumed by the dotfiles' fish
+# config, which calls `zoxide init fish` and `starship init fish`.
 
 echo "### Installing zoxide ###"
 # Zoxide is installed via its official script (the apt package
-# lags the releases). It lands in ~/.local/bin, which ~/.zshrc
-# already puts on PATH.
+# lags the releases). It lands in ~/.local/bin, which the
+# dotfiles' fish config puts on PATH.
 if [ ! -x "$HOME/.local/bin/zoxide" ]; then
   curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
 else
@@ -274,6 +237,58 @@ if ! command -v starship >/dev/null 2>&1; then
 else
   echo "    Already installed, skipping."
 fi
+
+# Write a marker-delimited block into a startup file, once. A
+# re-run is a no-op, and anything else already in the file is left
+# as it was. Both blocks below are bootstrap-owned (neither file is
+# in the dotfiles), so re-running this script updates them.
+write_block() {
+  local file="$1" begin="$2"
+  shift 2
+  if [ -f "$file" ] && grep -qF "$begin" "$file"; then
+    echo "    $(basename "$file"): block already present, skipping."
+    return 0
+  fi
+  if [ -s "$file" ]; then
+    printf '\n' >> "$file"
+  fi
+  printf '%s\n' "$begin" "$@" >> "$file"
+  echo "    $(basename "$file"): block added."
+}
+
+# bash reads ~/.bash_profile instead of the skel ~/.profile for login
+# shells, and an SSH session is exactly that -- so this block turns
+# every login into fish without touching /etc/passwd. `ssh host cmd`
+# is not a login shell, so scp, rsync, and scripts stay bash. The
+# PATH line is for the fallback where fish is missing: bash skips the
+# skel ~/.profile here, and that is what normally puts ~/.local/bin
+# on PATH.
+echo "### Writing the fish hand-off into ~/.bash_profile ###"
+write_block "$HOME/.bash_profile" "# BEGIN vps-bootstrap fish hand-off" \
+  '# Hand interactive logins (SSH) to fish; bash stays the login shell.' \
+  'PATH="$HOME/.local/bin:$PATH"' \
+  'if [[ $- == *i* ]] && command -v fish >/dev/null 2>&1; then' \
+  '  exec fish' \
+  'fi' \
+  "# END vps-bootstrap fish hand-off"
+
+# ~/.bashrc is what interactive non-login bash reads: typing `bash`
+# from fish, a tmux window, `bash -i`. That is the bash you land in
+# on purpose, and `fnm env` is what puts the active node version's
+# bin dir on PATH -- without it there is no node under bash at all
+# (node lives in ~/.local/share/fnm, not ~/.local/bin). The
+# interactive guard keeps `ssh host cmd` from paying for it.
+echo "### Writing the bash env block into ~/.bashrc ###"
+write_block "$HOME/.bashrc" "# BEGIN vps-bootstrap bash env" \
+  '# fnm-managed node for bash sessions (fish has its own config).' \
+  'case ":$PATH:" in' \
+  '  *":$HOME/.local/bin:"*) ;;' \
+  '  *) PATH="$HOME/.local/bin:$PATH" ;;' \
+  'esac' \
+  'if [[ $- == *i* ]] && command -v fnm >/dev/null 2>&1; then' \
+  '  eval "$(fnm env --use-on-cd --shell bash)"' \
+  'fi' \
+  "# END vps-bootstrap bash env"
 
 # ------------------------------------------------------------
 # 3. Neovim: vim-plug + renamed binary symlinks + undodir
@@ -314,12 +329,12 @@ fi
 # ------------------------------------------------------------
 # 4. Node via fnm (node version manager)
 # ------------------------------------------------------------
-# ~/.zshrc lists the `fnm` plugin and pnpm, so node is needed.
-# fnm installs to ~/.local/share/fnm; symlink it into
-# ~/.local/bin (which ~/.zshrc already puts on PATH) and grab
-# the latest LTS node. --skip-shell stops the installer from
-# appending its own `eval "$(fnm env)"` block to ~/.bashrc,
-# which we don't manage.
+# The dotfiles' fish config runs `fnm env` and uses pnpm, so node
+# is needed. fnm installs to ~/.local/share/fnm; symlink it into
+# ~/.local/bin (which the fish config already puts on PATH) and
+# grab the latest LTS node. --skip-shell stops the installer from
+# appending its own `eval "$(fnm env)"` block to ~/.bashrc, which
+# we don't manage.
 echo "### Installing fnm and latest LTS Node ###"
 if [ ! -x "$HOME/.local/bin/fnm" ]; then
   curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell
@@ -358,19 +373,7 @@ else
 fi
 
 # ------------------------------------------------------------
-# 5. Make zsh the default shell
-# ------------------------------------------------------------
-# Prompts for your password. command -v is safer/portable
-# than `which`.
-echo "### Changing default shell to zsh ###"
-if [ "$SHELL" != "$(command -v zsh)" ]; then
-  chsh -s "$(command -v zsh)"
-else
-  echo "    Default shell already zsh, skipping."
-fi
-
-# ------------------------------------------------------------
-# 6. Dotfiles
+# 5. Dotfiles
 # ------------------------------------------------------------
 # No keys are generated on this box. GitHub auth comes from the
 # 1Password SSH agent forwarded from your host -- you must have
@@ -459,21 +462,27 @@ if [ -d "$YADM_REPO_DIR" ]; then
     echo "    Pulled latest."
   fi
 else
-  # Only a fresh bootstrap needs this: oh-my-zsh and the skel
-  # defaults wrote shell files that would collide with (and block)
-  # the clone. Move them aside so yadm's versions win without
-  # destroying anything -- nothing is deleted, the originals stay in
-  # $BACKUP_DIR. On a re-run this block is skipped because the
-  # shell files are already yadm-managed (moving them would dirty
-  # the repo and leave you without a .zshrc).
-  echo "### Moving existing shell files out of the way (backed up) ###"
+  # Only a fresh bootstrap needs this, and only for the one shell
+  # startup file the Linux dotfiles track: ~/.config/fish/config.fish.
+  # Nothing here writes it (there is no zsh and no oh-my-zsh on this
+  # flow), but a fish that ran before the clone would have left its
+  # own default config there, and that would collide with (and
+  # block) the clone. Move it aside so yadm's version wins without
+  # destroying anything -- nothing is deleted, the original stays in
+  # $BACKUP_DIR. Files the dotfiles do not track (.bashrc, .profile,
+  # ~/.zshrc) are left alone: the clone never replaces them, and
+  # ~/.bash_profile is the fish hand-off this script wrote in step 2.
+  # On a re-run this block is skipped because the file is already
+  # yadm-managed (moving it would dirty the repo and leave you
+  # without a fish config).
+  echo "### Moving existing shell startup files out of the way (backed up) ###"
   BACKUP_DIR="$HOME/.bootstrap-backup-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$BACKUP_DIR"
-  for file in .zshrc .bashrc .bash_profile .profile .bash_logout; do
-    if [ -e "$HOME/$file" ]; then
-      mv "$HOME/$file" "$BACKUP_DIR/$file"
-    fi
-  done
+  FISH_CONFIG="$HOME/.config/fish/config.fish"
+  if [ -e "$FISH_CONFIG" ]; then
+    mkdir -p "$BACKUP_DIR/.config/fish"
+    mv "$FISH_CONFIG" "$BACKUP_DIR/.config/fish/config.fish"
+  fi
   if [ "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
     echo "    Backed up to $BACKUP_DIR"
   else
@@ -483,7 +492,7 @@ else
   if yadm clone -b main "$DOTFILES_REPO"; then
     echo "    Dotfiles cloned."
   else
-    echo "    yadm clone failed (tracked file colliding with a skel default?); restore with:" >&2
+    echo "    yadm clone failed (tracked file colliding with a shell startup file?); restore with:" >&2
     echo "      cp -a ${BACKUP_DIR:-?}/. \$HOME/" >&2
     exit 1
   fi
@@ -510,7 +519,7 @@ else
 fi
 
 # ------------------------------------------------------------
-# 7. sshd hardening (LAST mandatory step, so keys work first)
+# 6. sshd hardening (LAST mandatory step, so keys work first)
 # ------------------------------------------------------------
 # No root login, key-only authentication. Uses a drop-in file
 # (included by Ubuntu's default sshd_config). Before touching
@@ -588,7 +597,7 @@ EOF
 fi
 
 # ------------------------------------------------------------
-# 8. (Optional) UFW firewall
+# 7. (Optional) UFW firewall
 # ------------------------------------------------------------
 # Firewall setup is opt-in: deny all incoming by default, allow
 # outgoing, then explicitly open the ports you need. ssh is
@@ -617,7 +626,7 @@ if [[ "${SETUP_UFW,,}" =~ ^y(es)?$ ]]; then
 fi
 
 # ------------------------------------------------------------
-# 9. (Optional) Squid proxy
+# 8. (Optional) Squid proxy
 # ------------------------------------------------------------
 # Squid is a caching HTTP/HTTPS proxy. Install is opt-in. The
 # config is tightened to allow two ways in: from a single IP you
@@ -745,22 +754,28 @@ fi
 
 echo ""
 echo "### Final environment check ###"
-for command in zsh nvim fd bat fnm node npm pnpm yadm starship; do
+for command in fish nvim fd bat fnm node npm pnpm yadm starship; do
   if command -v "$command" >/dev/null 2>&1; then
     echo "    OK  $command"
   else
     echo "    MISSING $command" >&2
   fi
 done
-# oh-my-zsh is sourced from ~/.zshrc as a script, not a binary,
-# so check for its directory.
-if [ -d "$HOME/.oh-my-zsh" ]; then
-  echo "    OK  oh-my-zsh"
+# The startup blocks are what make an SSH login land in fish and
+# give bash a fnm-managed node, so check the markers rather than
+# trusting the writes.
+if grep -qF "# BEGIN vps-bootstrap fish hand-off" "$HOME/.bash_profile" 2>/dev/null; then
+  echo "    OK  fish hand-off"
 else
-  echo "    MISSING oh-my-zsh" >&2
+  echo "    MISSING fish hand-off in ~/.bash_profile" >&2
+fi
+if grep -qF "# BEGIN vps-bootstrap bash env" "$HOME/.bashrc" 2>/dev/null; then
+  echo "    OK  bash env (fnm)"
+else
+  echo "    MISSING bash env block in ~/.bashrc" >&2
 fi
 # zoxide lands in ~/.local/bin, which is on PATH only after the
-# dotfiles' .zshrc loads, so check for the file directly.
+# dotfiles' fish config loads, so check for the file directly.
 if [ -x "$HOME/.local/bin/zoxide" ]; then
   echo "    OK  zoxide"
 else
@@ -768,7 +783,7 @@ else
 fi
 
 echo ""
-echo "### Step 3 done. Log out and back in to start using zsh. ###"
+echo "### Step 3 done. Log out and back in to start using fish (bash stays the login shell). ###"
 if [ -f /var/run/reboot-required ]; then
   echo "A reboot is recommended (kernel or core libraries were updated):"
   echo "  sudo reboot"
