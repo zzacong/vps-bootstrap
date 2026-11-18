@@ -34,6 +34,10 @@ Use these terms in scripts, comments, and docs, and avoid the synonyms noted wit
 
 **Hardening drop-in**: `/etc/ssh/sshd_config.d/50-hardening.conf`.
 
-**Squid rules file**: `/etc/squid/conf.d/20-vps-bootstrap.conf`. Squid's own `squid.conf` is a packaged conffile and is never edited, so `apt upgrade` never asks about it.
+**Squid rules file**: `/etc/squid/conf.d/20-vps-bootstrap.conf`. Two rules: `acl tailnet src 100.64.0.0/10` and `http_access allow tailnet`. Squid's own `squid.conf` is a packaged conffile and is never edited, so `apt upgrade` never asks about it.
+
+**Tailnet**: the private Tailscale network this box joins, addressed out of `100.64.0.0/10`. It is the only thing the Squid rules file lets through, and the intended way in once port 22 is closed. Don't call it a "VPN" or a "Tailscale network".
+
+**Tailscale hand-off**: the `sudo tailscale up` the scripts print after installing Tailscale, and never run. The node is installed but logged out until you do it, which is why the proxy denies everyone in the meantime.
 
 **Mac credential policy**: neither flow keeps a GitHub key of its own. The 1Password agent is the only credential.

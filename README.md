@@ -27,6 +27,7 @@ Each step fetches the script with `bash -c "$(curl -fsSL <url>)"`. That form kee
 - **fish** as the interactive shell, with the **starship** prompt. The login shell is left alone: zsh + oh-my-zsh on the Mac, stock bash on Ubuntu — and an Ubuntu SSH login hands straight over to fish
 - **neovim** with vim-plug (plugins come from your dotfiles), **fd**, **bat**, **ripgrep**, **lf**, **yadm**
 - **Node** (latest LTS) via **fnm**, with **pnpm** (brew on Mac, `npm i -g` on Linux)
+- **Tailscale**, installed and enabled on every run, joining the box to your tailnet — it is what the optional Squid proxy is gated on
 - Optionally: UFW firewall and a Squid proxy
 - Your **dotfiles** cloned from `git@github.com:zzacong/dotfiles.git` — everything user-level lives there, so this repo only *bootstraps* the box
 
@@ -74,14 +75,14 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/ma
 
 **What it does**, roughly in order:
 
-1. **System packages** — `fish neovim fd-find bat ripgrep lf yadm git curl lsof unzip python3` via sudo (you'll be asked for your password on the first sudo). Optionally a full `apt upgrade` first.
+1. **System packages** — `fish neovim fd-find bat ripgrep lf yadm git curl lsof unzip python3` via sudo (you'll be asked for your password on the first sudo). Optionally a full `apt upgrade` first. Same section: **Tailscale**, via its official installer (`curl -fsSL https://tailscale.com/install.sh | sh`), skipped if already installed. It installs and enables the daemon but does not log the node in, so the run prints the one command it cannot run for you: `sudo tailscale up` (no `--ssh` — sshd stays the only way in). The optional Squid proxy is gated on the tailnet, so it does nothing until you run that.
 2. **Shell tools** — zoxide and the starship prompt (both via their official scripts), plus two marker-delimited startup blocks: the **fish hand-off** in `~/.bash_profile` (interactive logins `exec` fish, so SSH lands in fish while `ssh host cmd` stays bash) and the **bash env block** in `~/.bashrc` (puts `~/.local/bin` on `PATH` and runs `fnm env`, so node works when you drop into bash). fish itself comes with the packages above; its config is in the dotfiles.
 3. **Neovim** — vim-plug, plus symlinks `fdfind`→`fd` and `batcat`→`bat` (Ubuntu renames both even on 24.04).
 4. **Node via fnm** — latest LTS, made the default.
 5. **Dotfiles (yadm bootstrap)** — backs up the **shell startup files** (`~/.config/fish/config.fish`) into `~/.bootstrap-backup-*` rather than deleting them, so a failed clone leaves a usable shell. Verifies the **forwarded agent** (`$SSH_AUTH_SOCK` set, keys visible) and that GitHub accepts it as the account owning the dotfiles (never starts a local ssh-agent — that would hide the forwarded one), pre-seeds GitHub's pinned host key, then `yadm clone`s your dotfiles. Finally runs vim-plug against your `init.vim`.
 6. **sshd hardening (the last mandatory step)** — writes the **hardening drop-in** `/etc/ssh/sshd_config.d/50-hardening.conf` (`PermitRootLogin no`, `PasswordAuthentication no`, key-only, `AllowUsers` scoped to you). It refuses to run if there's no key in `authorized_keys`, asks you to confirm key login works from a *second terminal*, validates with `sshd -t` before reloading, and handles socket-activated sshd.
-7. **(Optional) UFW firewall** — deny incoming by default, allow outgoing; SSH always allowed first, optionally ports 80/443.
-8. **(Optional) Squid proxy** — caching HTTP(S) proxy on port 3128, locked down with an htpasswd file (and optionally one whitelisted IP). Rules go in the **Squid rules file** `/etc/squid/conf.d/20-vps-bootstrap.conf`, which stock `squid.conf` includes before its default `deny all`; `squid.conf` itself is never edited, so `apt upgrade` never asks about it. Config is parse-validated before restart. Available standalone as `setup-squid.sh` if you want to re-run or fix just the proxy config without redoing step 3.
+7. **(Optional) UFW firewall** — deny incoming by default, allow outgoing, then two rules: `allow ssh` and `allow in on tailscale0`. Ports 80/443 are never opened, and neither is 3128 — the proxy rides in on the interface rule. Port 22 stays open to the world during the run because the node is not logged in to the tailnet yet; the script prints (never runs) the `sudo ufw delete allow ssh` that closes it once tailnet ssh is proven from a second terminal.
+8. **(Optional) Squid proxy** — caching HTTP(S) proxy on port 3128, gated on the **tailnet** and nothing else: the **Squid rules file** is `acl tailnet src 100.64.0.0/10` plus `http_access allow tailnet`, with no password file and no `auth_param`. Rules go in `/etc/squid/conf.d/20-vps-bootstrap.conf`, which stock `squid.conf` includes after its own denies and just before its `deny all` — so `squid.conf` itself is never edited (`apt upgrade` never asks), CONNECT stays limited to 443, and tailnet clients still can't reach the box's own localhost services through the proxy. Config is parse-validated before restart. Available standalone as `setup-squid.sh` if you want to re-run or fix just the proxy config without redoing step 3.
 
 If a reboot is pending (kernel update), it tells you.
 
@@ -159,7 +160,7 @@ zsh -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/mai
 |---|---|
 | `setup-root.sh` | Step 1 (VPS) — create the sudo user (as root) |
 | `setup-ssh.sh` | Step 2 (VPS) — host key install (as root) |
-| `setup-user.sh` | Step 3 (VPS) — packages, shell, dotfiles, hardening, optional firewall/proxy (as new user) |
-| `setup-squid.sh` | Standalone extract of setup-user.sh's optional Squid section, for re-running/fixing just the proxy config |
+| `setup-user.sh` | Step 3 (VPS) — packages, Tailscale, shell, dotfiles, hardening, optional firewall/proxy (as new user) |
+| `setup-squid.sh` | Standalone extract of setup-user.sh's optional Squid section (tailnet-only rules, no credentials), for re-running/fixing just the proxy config |
 | `setup-mac.sh` | Mac — shell, brew formulae and casks, fnm/Node, rustup, uv tools, 1Password agent, base git config, pnpm globals, dotfiles (as the user). Prerequisites: CLT, Homebrew, 1Password |
 | `setup-github-hosts.sh` | Mac — optional wizard that adds GitHub SSH host aliases to `~/.ssh/config` (run by `setup-mac.sh` or on its own) |
