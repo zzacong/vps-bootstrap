@@ -123,11 +123,26 @@ echo "    squid: ${INSTALL_SQUID:-n}"
 # on the first sudo command.
 #   fd-find / bat  -> Ubuntu still renames these to fdfind /
 #                     batcat even on 24.04 (handled in step 3)
-#   lf             -> available since Ubuntu 23.04
+#   yazi           -> no Ubuntu release packages it, so it comes
+#                     from the project's own apt repo just below;
+#                     that package is a musl build, so it runs on
+#                     24.04 and later as-is
 #   lsof           -> used by the `runp` function in the fish config
 #   unzip          -> required by the fnm installer (step 4)
 #   python3        -> not used by this script; kept because tools
 #                     in the dotfiles expect it to exist
+
+# The yazi repo is one keyring plus one flat `stable` list file,
+# both rewritten on every run so a re-run picks up a rotated key
+# without leaving a stale copy behind. curl -f under the script's
+# `set -euo pipefail` aborts the run if the key cannot be fetched,
+# so apt never sees a list signed by nothing.
+echo "### Adding the yazi apt repository ###"
+curl -fsSL https://yazi-rs.github.io/builds/yazi-keyring.gpg \
+  | sudo tee /usr/share/keyrings/yazi-keyring.gpg >/dev/null
+echo 'deb [signed-by=/usr/share/keyrings/yazi-keyring.gpg] https://yazi-rs.github.io/builds/ stable main' \
+  | sudo tee /etc/apt/sources.list.d/yazi.list >/dev/null
+
 echo "### Updating apt packages ###"
 sudo apt-get update
 
@@ -137,15 +152,18 @@ if [[ "${RUN_UPGRADE,,}" =~ ^y(es)?$ ]]; then
   sudo apt-get upgrade -y
 fi
 
-echo "### Installing fish, neovim, fd-find, bat, ripgrep, lf, yadm ###"
+echo "### Installing fish, neovim, fd-find, bat, ripgrep, yazi, yadm ###"
 sudo apt-get install -y --no-install-recommends \
-  fish neovim fd-find bat ripgrep lf yadm git curl lsof unzip python3
+  fish neovim fd-find bat ripgrep yazi yadm git curl lsof unzip python3
 
 # Verify the packages actually landed (minimal images and future
-# releases can rename or drop them).
+# releases can rename or drop them). The yazi package ships two
+# binaries -- the file manager and `ya`, its plugin CLI -- and
+# pulls in `file` as a hard dependency, so previews resolve types
+# without any Recommends being installed.
 echo "### Verifying installed commands ###"
 MISSING=""
-for command in fish nvim fdfind batcat rg lf yadm git curl lsof unzip python3; do
+for command in fish nvim fdfind batcat rg yazi ya yadm git curl lsof unzip python3; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "    Missing command: $command" >&2
     MISSING="$MISSING $command"

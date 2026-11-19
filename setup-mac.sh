@@ -173,7 +173,7 @@ fi
 # ------------------------------------------------------------
 # 2. Brew formulae and casks
 # ------------------------------------------------------------
-# The core set mirrors the VPS flow (editor, pager tools, lf,
+# The core set mirrors the VPS flow (editor, pager tools, yazi,
 # yadm for dotfiles) plus the extra tools this machine actually
 # uses day-to-day. git is here to upgrade a tool macOS already
 # has: the CLT's build lags Homebrew's by several minor versions,
@@ -184,7 +184,7 @@ FORMULAS=(
   bat
   ripgrep
   fd
-  lf
+  yazi
   yadm
   git
   gh
@@ -208,16 +208,18 @@ FORMULAS=(
   just
   just-lsp
   imagemagick
+  resvg
 )
 echo "### Installing brew formulas: ${FORMULAS[*]} ###"
 brew install "${FORMULAS[@]}"
 
 # Verify the installed binaries actually landed (Homebrew can
 # rename or drop formulas in future releases). git-delta ships
-# the `delta` binary, imagemagick ships `magick`.
+# the `delta` binary, imagemagick ships `magick`, and yazi ships
+# both the file manager and `ya`, its plugin CLI.
 echo "### Verifying installed commands ###"
 MISSING=""
-for cmd in nvim bat rg fd lf yadm git gh delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm fish starship zoxide zig go just just-lsp magick; do
+for cmd in nvim bat rg fd yazi ya yadm git gh delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm fish starship zoxide zig go just just-lsp magick resvg; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "    Missing command: $cmd" >&2
     MISSING="$MISSING $cmd"
@@ -653,7 +655,7 @@ if [[ "$ADD_GITHUB_HOSTS" == [Yy]* ]]; then
 fi
 
 echo "### Final environment check ###"
-for cmd in zsh nvim fd bat rg lf yadm gh fnm fish node npm pnpm starship zoxide zig go cargo rustc; do
+for cmd in zsh nvim fd bat rg yazi ya yadm gh fnm fish node npm pnpm starship zoxide zig go cargo rustc resvg; do
   if command -v "$cmd" >/dev/null 2>&1; then
     echo "    OK  $cmd"
   else

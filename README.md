@@ -25,7 +25,7 @@ Each step fetches the script with `bash -c "$(curl -fsSL <url>)"`. That form kee
 - A sudo-capable **new user** (default `zacong`) as your only login on the box
 - Key-only SSH: your 1Password **host key** for logging in, forwarded to the box for the dotfiles clone — no private keys ever live on the server
 - **fish** as the interactive shell, with the **starship** prompt. The login shell is left alone: zsh + oh-my-zsh on the Mac, stock bash on Ubuntu — and an Ubuntu SSH login hands straight over to fish
-- **neovim** with vim-plug (plugins come from your dotfiles), **fd**, **bat**, **ripgrep**, **lf**, **yadm**
+- **neovim** with vim-plug (plugins come from your dotfiles), **fd**, **bat**, **ripgrep**, **yazi**, **yadm**
 - **Node** (latest LTS) via **fnm**, with **pnpm** (brew on Mac, `npm i -g` on Linux)
 - **Tailscale**, installed and enabled on every run, joining the box to your tailnet — it is what the optional Squid proxy is gated on
 - Optionally: UFW firewall and a Squid proxy
@@ -75,7 +75,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/zzacong/vps-bootstrap/ma
 
 **What it does**, roughly in order:
 
-1. **System packages** — `fish neovim fd-find bat ripgrep lf yadm git curl lsof unzip python3` via sudo (you'll be asked for your password on the first sudo). Optionally a full `apt upgrade` first. Same section: **Tailscale**, via its official installer (`curl -fsSL https://tailscale.com/install.sh | sh`), skipped if already installed. It installs and enables the daemon but does not log the node in, so the run prints the one command it cannot run for you: `sudo tailscale up` (no `--ssh` — sshd stays the only way in). The optional Squid proxy is gated on the tailnet, so it does nothing until you run that.
+1. **System packages** — `fish neovim fd-find bat ripgrep yazi yadm git curl lsof unzip python3` via sudo (you'll be asked for your password on the first sudo). Ubuntu packages no yazi in any release, so the run first adds the project's own apt repo: its keyring to `/usr/share/keyrings/yazi-keyring.gpg` and a `stable` list file to `/etc/apt/sources.list.d/yazi.list`, both rewritten every run. That repo is the only one outside Ubuntu's own, and yazi upgrades with everything else on a later `apt upgrade`. Optionally a full `apt upgrade` first. Same section: **Tailscale**, via its official installer (`curl -fsSL https://tailscale.com/install.sh | sh`), skipped if already installed. It installs and enables the daemon but does not log the node in, so the run prints the one command it cannot run for you: `sudo tailscale up` (no `--ssh` — sshd stays the only way in). The optional Squid proxy is gated on the tailnet, so it does nothing until you run that.
 2. **Shell tools** — zoxide and the starship prompt (both via their official scripts), plus two marker-delimited startup blocks: the **fish hand-off** in `~/.bash_profile` (interactive logins `exec` fish, so SSH lands in fish while `ssh host cmd` stays bash) and the **bash env block** in `~/.bashrc` (puts `~/.local/bin` on `PATH` and runs `fnm env`, so node works when you drop into bash). fish itself comes with the packages above; its config is in the dotfiles.
 3. **Neovim** — vim-plug, plus symlinks `fdfind`→`fd` and `batcat`→`bat` (Ubuntu renames both even on 24.04).
 4. **Node via fnm** — latest LTS, made the default.
@@ -121,7 +121,7 @@ The Mac flow is **zsh, not bash**. A fresh Mac's `/bin/zsh` is always a recent 5
 **What it does**, in order. The first step is a preflight that asserts the three prerequisites above, so a missing one stops the script immediately rather than after it installs a batch of packages.
 
 1. **zsh login shell:** oh-my-zsh (unattended) plus the two plugins it doesn't bundle (`zsh-autosuggestions`, `fast-syntax-highlighting`). zsh is already the default on macOS and is never changed, so there's no `chsh` — the login shell stays a usable fallback for SSH into the Mac and for `zsh -c`.
-2. **Brew formulae:** `neovim bat ripgrep fd lf yadm` (the VPS core) plus `git gh git-delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm fish starship zoxide zig go just just-lsp imagemagick`. `git` upgrades the CLT's older build, and macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks. `fish` is the shell Ghostty starts; the dotfiles config it.
+2. **Brew formulae:** `neovim bat ripgrep fd yazi yadm` (the VPS core) plus `git gh git-delta jq uv bun btop chafa glow fastfetch ffmpeg oha pnpm fnm fish starship zoxide zig go just just-lsp imagemagick resvg`. `git` upgrades the CLT's older build, and macOS ships the real `fd`/`bat` names, so no Ubuntu-style symlinks. `fish` is the shell Ghostty starts; the dotfiles config it. `resvg` renders SVG to PNG on the command line, with no browser involved; it lives on the Mac only, since the VPS has no use for it.
 3. **Brew casks:** `font-caskaydia-cove-nerd-font font-geist-mono-nerd-font keycastr`. The fonts install per-user and keycastr is an app, so this batch needs no password.
 4. **Neovim:** vim-plug, plus the undodir `init.vim` expects.
 5. **Node via fnm:** installed through Homebrew, latest LTS made the default.
